@@ -1,37 +1,30 @@
 /**
  * Pirros Pipeline Dashboard — HubSpot Live Data Function
  * =======================================================
- * Uses hardcoded stage IDs from the Pirros HubSpot account to avoid
- * any label-matching issues. Stage IDs are permanent in HubSpot.
+ * Uses hardcoded stage IDs confirmed from Pirros HubSpot account.
  *
- * Stage ID mapping (confirmed from HubSpot):
+ * Stage ID mapping:
  *   decisionmakerboughtin = Meeting Booked
  *   166376493             = Discovery
  *   closedwon             = Scoping
  *   presentationscheduled = Validation
  *   119042476             = Commit
- *   appointmentscheduled  = Closed Won - Company  (EXCLUDED)
- *   65148438              = Lost - Company         (EXCLUDED)
- *   1179610654            = Wrong Person           (EXCLUDED)
- *   164207423             = Company DQ             (EXCLUDED)
- *   226595252             = Deal DQ                (EXCLUDED)
  *
- * Champion: contact influence property = "4 - Champion"
- * DM:       contact influence property = "6 - Decision Maker"
+ * Health checks:
+ *   Stagnating:    No activity in 14+ days (notes_last_updated) — active pipeline only
+ *   No Champion:   Discovery onwards — checks contact influence = "4 - Champion"
+ *   No DM:         Validation + Commit only — checks contact influence = "6 - Decision Maker"
+ *   No Next Step:  notes_next_activity_date is missing OR is before today (not today)
+ *   Hygiene Gaps:  Missing amount, close date, next activity, or no contacts — shows what's missing
+ *   Mtg Overdue:   Meeting Booked stage where notes_next_activity_date is before today
  */
 
 const HUBSPOT_BASE = "https://api.hubapi.com";
 
-// Active pipeline stage IDs (Discovery → Commit)
 const ACTIVE_STAGE_IDS = ["166376493", "closedwon", "presentationscheduled", "119042476"];
-
-// Meeting Booked stage ID
-const MTG_STAGE_ID = "decisionmakerboughtin";
-
-// All stages to include (active + meeting booked)
+const MTG_STAGE_ID     = "decisionmakerboughtin";
 const ALL_INCLUDED_IDS = [...ACTIVE_STAGE_IDS, MTG_STAGE_ID];
 
-// Human readable labels for display
 const STAGE_LABELS = {
   "decisionmakerboughtin": "Meeting Booked",
   "166376493":             "Discovery",
@@ -40,17 +33,15 @@ const STAGE_LABELS = {
   "119042476":             "Commit",
 };
 
-// Stages where No Champion should be flagged (Discovery onwards = all active)
+// No Champion: Discovery onwards (all active stages)
 const CHAMPION_STAGE_IDS = ACTIVE_STAGE_IDS;
 
-// Stages where No DM should be flagged (Scoping onwards)
-const DM_STAGE_IDS = ["closedwon", "presentationscheduled", "119042476"];
+// No DM: Validation + Commit only
+const DM_STAGE_IDS = ["presentationscheduled", "119042476"];
 
-// Influence property values
 const CHAMPION_INFLUENCE = "4 - Champion";
 const DM_INFLUENCE       = "6 - Decision Maker";
 
-// Rep email → display name
 const REP_EMAILS = {
   "kas@pirros.com":      "Kas",
   "xander@pirros.com":   "Xander",
@@ -75,18 +66,14 @@ exports.handler = async (event) => {
       return { statusCode: 500, headers, body: JSON.stringify({ error: "HUBSPOT_API_KEY not set" }) };
     }
 
-    // 1. Fetch owner ID → rep name mapping
     const ownerMap = await fetchOwners(apiKey);
-
-    // 2. Fetch all active pipeline + meeting booked deals
-    const deals = await fetchPipelineDeals(apiKey);
-
-    // 3. Fetch champion/DM/contact associations for all deals
-    const dealIds = deals.map(d => d.id);
+    const deals    = await fetchPipelineDeals(apiKey);
+    const dealIds  = deals.map(d => d.id);
     const { championDealIds, dmDealIds, dealsWithContacts } = await fetchDealContactRoles(apiKey, dealIds);
 
-    // 4. Classify deals into health check buckets
-    const now = Date.now();
+    const now      = Date.now();
+    const todayStr = new Date().toISOString().slice(0, 10); // "2026-03-24"
+
     const classified = {
       stag: {}, champ: {}, dm: {},
       next: {}, hyg:   {}, mtg: {}, punt: {},
@@ -111,8 +98,17 @@ exports.handler = async (event) => {
 
       if (isActive) totalActiveDeals++;
 
-      const nextActivity = props.hs_next_activity_date
-        ? formatDate(props.hs_next_activity_date) : "N/A";
+      // Next activity date handling
+      const nextActRaw  = props.notes_next_activity_date || "";
+      const nextActDate = nextActRaw ? nextActRaw.slice(0, 10) : null; // "2026-03-24"
+      const nextActStr  = nextActDate ? formatDate(nextActRaw) : "N/A";
+
+      // Is next activity overdue? Flag only if before today (not today)
+      const nextActOverdue = nextActDate && nextActDate < todayStr;
+
+      // Last activity for stagnation
+      const lastActRaw  = props.notes_last_updated || "";
+      const lastActStr  = lastActRaw ? formatDate(lastActRaw) : "N/A";
 
       const dealObj = {
         name:         props.dealname || "Untitled",
@@ -120,21 +116,20 @@ exports.handler = async (event) => {
         stage:        stageLabel,
         amount:       props.amount ? `$${Number(props.amount).toLocaleString()}` : "N/A",
         close:        props.closedate ? formatDate(props.closedate) : "N/A",
-        nextActivity,
+        nextActivity: nextActStr,
+        lastActivity: lastActStr,
         extra:        "0",
       };
 
-      // ── Stagnating: no activity in 14+ days (active pipeline only) ────
-      if (isActive) {
-        const lastAct = props.hs_last_activity_date || props.notes_last_updated;
-        if (lastAct) {
-          const daysSince = Math.floor((now - new Date(lastAct).getTime()) / 86400000);
-          if (daysSince >= 14) {
-            classified.stag[repName].push({ ...dealObj, extra: String(daysSince) });
-          }
-        } else {
-          classified.stag[repName].push({ ...dealObj, extra: "14" });
+      // ── Stagnating: no activity in 14+ days ───────────────────────────
+      if (isActive && lastActRaw) {
+        const daysSince = Math.floor((now - new Date(lastActRaw).getTime()) / 86400000);
+        if (daysSince >= 14) {
+          classified.stag[repName].push({ ...dealObj, extra: String(daysSince) });
         }
+      } else if (isActive && !lastActRaw) {
+        // Never had any activity logged
+        classified.stag[repName].push({ ...dealObj, extra: "14+" });
       }
 
       // ── No Champion: Discovery → Commit ───────────────────────────────
@@ -142,38 +137,35 @@ exports.handler = async (event) => {
         classified.champ[repName].push(dealObj);
       }
 
-      // ── No DM: Scoping → Commit ────────────────────────────────────────
+      // ── No DM: Validation + Commit only ───────────────────────────────
       if (isActive && DM_STAGE_IDS.includes(stageId) && !dmDealIds.has(deal.id)) {
         classified.dm[repName].push(dealObj);
       }
 
-      // ── No Next Activity Date (active only) ───────────────────────────
-      if (isActive && !props.hs_next_activity_date) {
-        classified.next[repName].push({ ...dealObj, extra: "-1" });
+      // ── No Next Activity: missing OR overdue (not including today) ─────
+      if (isActive && (!nextActDate || nextActOverdue)) {
+        classified.next[repName].push({ ...dealObj, extra: nextActDate || "none" });
       }
 
-      // ── Hygiene Gaps: flag once per deal, list what's missing ─────────
+      // ── Hygiene Gaps: show exactly what's missing ──────────────────────
       if (isActive) {
         const issues = [];
         if (!props.amount || Number(props.amount) === 0) issues.push("No amount");
         if (!props.closedate)                             issues.push("No close date");
-        if (!props.hs_next_activity_date)                 issues.push("No next step");
+        if (!nextActDate || nextActOverdue)               issues.push("No next step");
         if (!dealsWithContacts.has(deal.id))              issues.push("No contacts");
         if (issues.length > 0) {
-          classified.hyg[repName].push({
-            ...dealObj,
-            extra: issues.join(", "),
-          });
+          classified.hyg[repName].push({ ...dealObj, extra: issues.join(" · ") });
         }
       }
 
-      // ── Meeting Booked Overdue ─────────────────────────────────────────
-      if (isMtgBooked) {
-        classified.mtg[repName].push({ ...dealObj, extra: "99" });
+      // ── Meeting Booked Overdue: only if next activity date is before today
+      if (isMtgBooked && (!nextActDate || nextActOverdue)) {
+        classified.mtg[repName].push({ ...dealObj, extra: nextActDate || "no date" });
       }
     }
 
-    // 5. Summary totals
+    // Summary
     const summary = {
       totalDeals:   totalActiveDeals,
       stagnating:   REPS.reduce((n, r) => n + classified.stag[r].length,  0),
@@ -186,7 +178,6 @@ exports.handler = async (event) => {
     summary.totalIssues = summary.stagnating + summary.noChampion + summary.noDM +
                           summary.noNextStep + summary.hygieneGaps + summary.mtgOverdue;
 
-    // 6. Rep scorecard
     const repStats = REPS.map(rep => ({
       name:  rep,
       total: deals.filter(d =>
@@ -210,10 +201,7 @@ exports.handler = async (event) => {
       headers,
       body: JSON.stringify({
         lastUpdated: new Date().toISOString(),
-        summary,
-        reps: REPS,
-        repStats,
-        data: classified,
+        summary, reps: REPS, repStats, data: classified,
       }),
     };
 
@@ -228,43 +216,26 @@ exports.handler = async (event) => {
 };
 
 
-// ─── HubSpot API Helpers ──────────────────────────────────────────────────────
-
 async function fetchPipelineDeals(apiKey) {
-  // Fetch only active pipeline + meeting booked deals using stage ID filter
   const deals = [];
   let after   = null;
   const props = [
     "dealname", "dealstage", "hubspot_owner_id", "amount", "closedate",
-    "hs_next_activity_date", "hs_last_activity_date", "notes_last_updated",
-  ].join(",");
+    "notes_next_activity_date", "notes_last_updated", "num_associated_contacts",
+  ];
 
   while (true) {
-    // Use HubSpot search API to filter by specific stage IDs — much more reliable
     const body = {
-      filterGroups: [{
-        filters: [{
-          propertyName: "dealstage",
-          operator:     "IN",
-          values:       ALL_INCLUDED_IDS,
-        }],
-      }],
-      properties: props.split(","),
-      limit:       100,
+      filterGroups: [{ filters: [{ propertyName: "dealstage", operator: "IN", values: ALL_INCLUDED_IDS }] }],
+      properties: props,
+      limit: 100,
     };
     if (after) body.after = after;
 
-    const resp = await hubspotPost(
-      `${HUBSPOT_BASE}/crm/v3/objects/deals/search`,
-      body,
-      apiKey
-    );
+    const resp = await hubspotPost(`${HUBSPOT_BASE}/crm/v3/objects/deals/search`, body, apiKey);
     deals.push(...(resp.results || []));
-    if (resp.paging?.next?.after) {
-      after = resp.paging.next.after;
-    } else {
-      break;
-    }
+    after = resp.paging?.next?.after || null;
+    if (!after) break;
   }
 
   console.log(`Fetched ${deals.length} pipeline deals`);
@@ -277,13 +248,10 @@ async function fetchOwners(apiKey) {
   try {
     const resp = await hubspotGet(`${HUBSPOT_BASE}/crm/v3/owners?limit=100`, apiKey);
     for (const owner of (resp.results || [])) {
-      const email = (owner.email || "").toLowerCase();
-      const name  = REP_EMAILS[email];
+      const name = REP_EMAILS[(owner.email || "").toLowerCase()];
       if (name) map[owner.id] = name;
     }
-  } catch (e) {
-    console.warn("Could not fetch owners:", e.message);
-  }
+  } catch (e) { console.warn("Owners fetch error:", e.message); }
   return map;
 }
 
@@ -292,10 +260,9 @@ async function fetchDealContactRoles(apiKey, dealIds) {
   const championDealIds   = new Set();
   const dmDealIds         = new Set();
   const dealsWithContacts = new Set();
+  const contactIdsByDeal  = new Map();
 
-  // Batch fetch contact associations
-  const contactIdsByDeal = new Map();
-
+  // Batch fetch associations
   for (let i = 0; i < dealIds.length; i += 100) {
     const batch = dealIds.slice(i, i + 100);
     try {
@@ -306,22 +273,17 @@ async function fetchDealContactRoles(apiKey, dealIds) {
       );
       for (const result of (resp.results || [])) {
         const dealId     = result.from?.id;
-        if (!dealId) continue;
         const contactIds = (result.to || []).map(t => t.id).filter(Boolean);
-        if (contactIds.length > 0) {
+        if (dealId && contactIds.length > 0) {
           dealsWithContacts.add(dealId);
           contactIdsByDeal.set(dealId, contactIds);
         }
       }
-    } catch (e) {
-      console.warn("Association batch error:", e.message);
-    }
+    } catch (e) { console.warn("Association batch error:", e.message); }
   }
 
-  // Collect all unique contact IDs
-  const allContactIds = [...new Set([...contactIdsByDeal.values()].flat())];
-
-  // Batch fetch influence property for all contacts
+  // Batch fetch influence for all contacts
+  const allContactIds    = [...new Set([...contactIdsByDeal.values()].flat())];
   const contactInfluence = new Map();
 
   for (let i = 0; i < allContactIds.length; i += 100) {
@@ -332,21 +294,19 @@ async function fetchDealContactRoles(apiKey, dealIds) {
         { inputs: batch.map(id => ({ id })), properties: ["influence"] },
         apiKey
       );
-      for (const contact of (resp.results || [])) {
-        const influence = (contact.properties?.influence || "").trim();
-        if (influence) contactInfluence.set(contact.id, influence);
+      for (const c of (resp.results || [])) {
+        const inf = (c.properties?.influence || "").trim();
+        if (inf) contactInfluence.set(c.id, inf);
       }
-    } catch (e) {
-      console.warn("Contact batch error:", e.message);
-    }
+    } catch (e) { console.warn("Contact batch error:", e.message); }
   }
 
-  // Check each deal's contacts for champion/DM influence
+  // Map influence to deals
   for (const [dealId, contactIds] of contactIdsByDeal.entries()) {
     for (const cid of contactIds) {
-      const influence = contactInfluence.get(cid) || "";
-      if (influence === CHAMPION_INFLUENCE) championDealIds.add(dealId);
-      if (influence === DM_INFLUENCE)       dmDealIds.add(dealId);
+      const inf = contactInfluence.get(cid) || "";
+      if (inf === CHAMPION_INFLUENCE) championDealIds.add(dealId);
+      if (inf === DM_INFLUENCE)       dmDealIds.add(dealId);
     }
   }
 
@@ -356,35 +316,21 @@ async function fetchDealContactRoles(apiKey, dealIds) {
 
 async function hubspotGet(url, apiKey) {
   const resp = await fetch(url, {
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type":  "application/json",
-    },
+    headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
   });
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`HubSpot GET ${resp.status}: ${text.slice(0, 300)}`);
-  }
+  if (!resp.ok) throw new Error(`HubSpot GET ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
   return resp.json();
 }
-
 
 async function hubspotPost(url, body, apiKey) {
   const resp = await fetch(url, {
     method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type":  "application/json",
-    },
+    headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`HubSpot POST ${resp.status}: ${text.slice(0, 300)}`);
-  }
+  if (!resp.ok) throw new Error(`HubSpot POST ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
   return resp.json();
 }
-
 
 function formatDate(iso) {
   if (!iso) return "N/A";
