@@ -389,7 +389,7 @@ function buildTabs(secKey, dataObj, reps) {
     if (deals.length === 0) {
       panel.innerHTML = '<div class="empty">No flagged deals for ' + rep + '</div>';
     } else {
-      const stageCol = secKey === 'stag' ? '<th>Days Idle</th>' : secKey === 'mtg' ? '<th>Days Overdue</th>' : '<th>Stage</th>';
+      const stageCol = secKey === 'stag' ? '<th>Days Idle</th>' : secKey === 'mtg' ? '<th>Days Overdue</th>' : secKey === 'hyg' ? '<th>Issues</th>' : '<th>Stage</th>';
       let rows = '';
       deals.forEach(d => {
         const extra = parseInt(d.extra);
@@ -398,10 +398,13 @@ function buildTabs(secKey, dataObj, reps) {
           : extra > 10
             ? `<span class="pill pill-org">${d.extra}d</span>`
             : `<span class="pill pill-ylw">${d.extra}d</span>`;
-        const stageCell = secKey === 'stag' ? badge : d.stage;
-        rows += `<tr><td><a class="deal-link" href="${d.url}" target="_blank">${d.name} &#8599;</a></td><td>${d.amount}</td><td>${stageCell}</td><td>${d.close}</td></tr>`;
+        const stageCell = secKey === 'stag' ? badge
+          : secKey === 'hyg' ? `<span style="font-size:11px;color:#fb923c">${d.extra}</span>`
+          : d.stage;
+        const nextStep = d.nextActivity || 'N/A';
+        rows += `<tr><td><a class="deal-link" href="${d.url}" target="_blank">${d.name} &#8599;</a></td><td>${d.amount}</td><td>${stageCell}</td><td>${d.close}</td><td>${nextStep}</td></tr>`;
       });
-      panel.innerHTML = `<table class="deal-table"><thead><tr><th>Deal</th><th>Amount</th>${stageCol}<th>Close Date</th></tr></thead><tbody>${rows}</tbody></table>`;
+      panel.innerHTML = `<table class="deal-table"><thead><tr><th>Deal</th><th>Amount</th>${stageCol}<th>Close Date</th><th>Next Activity</th></tr></thead><tbody>${rows}</tbody></table>`;
     }
     panelsEl.appendChild(panel);
   });
