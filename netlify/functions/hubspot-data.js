@@ -1,38 +1,54 @@
 /**
  * Pirros Pipeline Dashboard — HubSpot Live Data Function
  * =======================================================
- * Pulls live deal data from HubSpot on every page load.
- * Champion and Decision Maker are detected via the contact's
- * "Influence" property (4 - Champion, 6 - Decision Maker).
+ * Uses hardcoded stage IDs from the Pirros HubSpot account to avoid
+ * any label-matching issues. Stage IDs are permanent in HubSpot.
  *
- * Health checks:
- *   - Stagnating:       No activity in 14+ days (Discovery → Commit)
- *   - No Champion:      Discovery → Commit deals with no champion contact
- *   - No DM:            Scoping → Commit deals with no DM contact
- *   - No Next Activity: Missing hs_next_activity_date (Discovery → Commit)
- *   - Hygiene Gaps:     Missing amount, close date, next activity, or no contacts
- *   - Mtg Overdue:      Meeting Booked stage
- *   - Punted:           Reserved for future snapshot tracking
+ * Stage ID mapping (confirmed from HubSpot):
+ *   decisionmakerboughtin = Meeting Booked
+ *   166376493             = Discovery
+ *   closedwon             = Scoping
+ *   presentationscheduled = Validation
+ *   119042476             = Commit
+ *   appointmentscheduled  = Closed Won - Company  (EXCLUDED)
+ *   65148438              = Lost - Company         (EXCLUDED)
+ *   1179610654            = Wrong Person           (EXCLUDED)
+ *   164207423             = Company DQ             (EXCLUDED)
+ *   226595252             = Deal DQ                (EXCLUDED)
  *
- * Env var: HUBSPOT_API_KEY (Netlify environment variables)
+ * Champion: contact influence property = "4 - Champion"
+ * DM:       contact influence property = "6 - Decision Maker"
  */
 
 const HUBSPOT_BASE = "https://api.hubapi.com";
 
-// Exact stage labels from HubSpot pipeline settings
-const ACTIVE_STAGES   = ["Discovery", "Scoping", "Validation", "Commit"];
-const MTG_STAGE       = "Meeting Booked";
-const EXCLUDED_STAGES = ["Closed Won - Company", "Lost - Company", "Wrong Person", "Company DQ", "Deal DQ"];
+// Active pipeline stage IDs (Discovery → Commit)
+const ACTIVE_STAGE_IDS = ["166376493", "closedwon", "presentationscheduled", "119042476"];
 
-// Influence property values for champion/DM detection
-const CHAMPION_INFLUENCE = "4 - Champion";
-const DM_INFLUENCE       = "6 - Decision Maker";
+// Meeting Booked stage ID
+const MTG_STAGE_ID = "decisionmakerboughtin";
 
-// Stages where No Champion should be flagged (Discovery onwards)
-const CHAMPION_STAGES = ["Discovery", "Scoping", "Validation", "Commit"];
+// All stages to include (active + meeting booked)
+const ALL_INCLUDED_IDS = [...ACTIVE_STAGE_IDS, MTG_STAGE_ID];
+
+// Human readable labels for display
+const STAGE_LABELS = {
+  "decisionmakerboughtin": "Meeting Booked",
+  "166376493":             "Discovery",
+  "closedwon":             "Scoping",
+  "presentationscheduled": "Validation",
+  "119042476":             "Commit",
+};
+
+// Stages where No Champion should be flagged (Discovery onwards = all active)
+const CHAMPION_STAGE_IDS = ACTIVE_STAGE_IDS;
 
 // Stages where No DM should be flagged (Scoping onwards)
-const DM_STAGES = ["Scoping", "Validation", "Commit"];
+const DM_STAGE_IDS = ["closedwon", "presentationscheduled", "119042476"];
+
+// Influence property values
+const CHAMPION_INFLUENCE = "4 - Champion";
+const DM_INFLUENCE       = "6 - Decision Maker";
 
 // Rep email → display name
 const REP_EMAILS = {
@@ -62,24 +78,14 @@ exports.handler = async (event) => {
     // 1. Fetch owner ID → rep name mapping
     const ownerMap = await fetchOwners(apiKey);
 
-    // 2. Fetch all deals with required properties
-    const allDeals = await fetchAllDeals(apiKey);
+    // 2. Fetch all active pipeline + meeting booked deals
+    const deals = await fetchPipelineDeals(apiKey);
 
-    // 3. Filter to active pipeline + meeting booked only
-    const deals = allDeals.filter(d => {
-      const stage = (d.properties.dealstage_label || "").trim();
-      const excluded = EXCLUDED_STAGES.some(s => stage.toLowerCase() === s.toLowerCase());
-      const active   = ACTIVE_STAGES.some(s => stage.toLowerCase() === s.toLowerCase());
-      const mtg      = stage.toLowerCase() === MTG_STAGE.toLowerCase();
-      return !excluded && (active || mtg);
-    });
-
-    // 4. For each deal, fetch associated contacts and their influence values
-    //    This tells us which deals have a champion and/or decision maker set
+    // 3. Fetch champion/DM/contact associations for all deals
     const dealIds = deals.map(d => d.id);
     const { championDealIds, dmDealIds, dealsWithContacts } = await fetchDealContactRoles(apiKey, dealIds);
 
-    // 5. Classify deals into health check buckets
+    // 4. Classify deals into health check buckets
     const now = Date.now();
     const classified = {
       stag: {}, champ: {}, dm: {},
@@ -92,17 +98,16 @@ exports.handler = async (event) => {
     let totalActiveDeals = 0;
 
     for (const deal of deals) {
-      const props    = deal.properties;
-      const stage    = (props.dealstage_label || "").trim();
-      const ownerId  = props.hubspot_owner_id || "";
-      const repName  = ownerMap[ownerId] || null;
+      const props      = deal.properties;
+      const stageId    = props.dealstage || "";
+      const stageLabel = STAGE_LABELS[stageId] || stageId;
+      const ownerId    = props.hubspot_owner_id || "";
+      const repName    = ownerMap[ownerId] || null;
 
       if (!repName || !REPS.includes(repName)) continue;
 
-      const isMtgBooked  = stage.toLowerCase() === MTG_STAGE.toLowerCase();
-      const isActive     = ACTIVE_STAGES.some(s => stage.toLowerCase() === s.toLowerCase());
-      const inChampStage = CHAMPION_STAGES.some(s => stage.toLowerCase() === s.toLowerCase());
-      const inDMStage    = DM_STAGES.some(s => stage.toLowerCase() === s.toLowerCase());
+      const isMtgBooked = stageId === MTG_STAGE_ID;
+      const isActive    = ACTIVE_STAGE_IDS.includes(stageId);
 
       if (isActive) totalActiveDeals++;
 
@@ -112,14 +117,14 @@ exports.handler = async (event) => {
       const dealObj = {
         name:         props.dealname || "Untitled",
         url:          `https://app.hubspot.com/contacts/22763853/deal/${deal.id}`,
-        stage,
+        stage:        stageLabel,
         amount:       props.amount ? `$${Number(props.amount).toLocaleString()}` : "N/A",
         close:        props.closedate ? formatDate(props.closedate) : "N/A",
         nextActivity,
         extra:        "0",
       };
 
-      // ── Stagnating: no activity in 14+ days ───────────────────────────
+      // ── Stagnating: no activity in 14+ days (active pipeline only) ────
       if (isActive) {
         const lastAct = props.hs_last_activity_date || props.notes_last_updated;
         if (lastAct) {
@@ -128,41 +133,36 @@ exports.handler = async (event) => {
             classified.stag[repName].push({ ...dealObj, extra: String(daysSince) });
           }
         } else {
-          // No activity date at all — flag with max urgency
           classified.stag[repName].push({ ...dealObj, extra: "14" });
         }
       }
 
-      // ── No Champion: Discovery → Commit with no champion contact ──────
-      if (isActive && inChampStage && !championDealIds.has(deal.id)) {
+      // ── No Champion: Discovery → Commit ───────────────────────────────
+      if (isActive && CHAMPION_STAGE_IDS.includes(stageId) && !championDealIds.has(deal.id)) {
         classified.champ[repName].push(dealObj);
       }
 
-      // ── No Decision Maker: Scoping → Commit with no DM contact ────────
-      if (isActive && inDMStage && !dmDealIds.has(deal.id)) {
+      // ── No DM: Scoping → Commit ────────────────────────────────────────
+      if (isActive && DM_STAGE_IDS.includes(stageId) && !dmDealIds.has(deal.id)) {
         classified.dm[repName].push(dealObj);
       }
 
-      // ── No Next Activity Date ──────────────────────────────────────────
+      // ── No Next Activity Date (active only) ───────────────────────────
       if (isActive && !props.hs_next_activity_date) {
         classified.next[repName].push({ ...dealObj, extra: "-1" });
       }
 
-      // ── Hygiene Gaps: missing amount, close date, next activity, contacts
+      // ── Hygiene Gaps: flag once per deal, list what's missing ─────────
       if (isActive) {
-        const missingAmount   = !props.amount || Number(props.amount) === 0;
-        const missingClose    = !props.closedate;
-        const missingNext     = !props.hs_next_activity_date;
-        const missingContacts = !dealsWithContacts.has(deal.id);
-        if (missingAmount || missingClose || missingNext || missingContacts) {
+        const issues = [];
+        if (!props.amount || Number(props.amount) === 0) issues.push("No amount");
+        if (!props.closedate)                             issues.push("No close date");
+        if (!props.hs_next_activity_date)                 issues.push("No next step");
+        if (!dealsWithContacts.has(deal.id))              issues.push("No contacts");
+        if (issues.length > 0) {
           classified.hyg[repName].push({
             ...dealObj,
-            extra: [
-              missingAmount   ? "No amount"   : null,
-              missingClose    ? "No close date" : null,
-              missingNext     ? "No next step" : null,
-              missingContacts ? "No contacts"  : null,
-            ].filter(Boolean).join(", "),
+            extra: issues.join(", "),
           });
         }
       }
@@ -173,7 +173,7 @@ exports.handler = async (event) => {
       }
     }
 
-    // 6. Summary totals
+    // 5. Summary totals
     const summary = {
       totalDeals:   totalActiveDeals,
       stagnating:   REPS.reduce((n, r) => n + classified.stag[r].length,  0),
@@ -186,15 +186,13 @@ exports.handler = async (event) => {
     summary.totalIssues = summary.stagnating + summary.noChampion + summary.noDM +
                           summary.noNextStep + summary.hygieneGaps + summary.mtgOverdue;
 
-    // 7. Rep scorecard
+    // 6. Rep scorecard
     const repStats = REPS.map(rep => ({
       name:  rep,
-      total: deals.filter(d => {
-        const s = (d.properties.dealstage_label || "").trim();
-        const o = d.properties.hubspot_owner_id || "";
-        return ownerMap[o] === rep &&
-          ACTIVE_STAGES.some(a => s.toLowerCase() === a.toLowerCase());
-      }).length,
+      total: deals.filter(d =>
+        ACTIVE_STAGE_IDS.includes(d.properties.dealstage) &&
+        ownerMap[d.properties.hubspot_owner_id] === rep
+      ).length,
       stag:         classified.stag[rep].length,
       champ:        classified.champ[rep].length,
       dm:           classified.dm[rep].length,
@@ -232,19 +230,35 @@ exports.handler = async (event) => {
 
 // ─── HubSpot API Helpers ──────────────────────────────────────────────────────
 
-async function fetchAllDeals(apiKey) {
+async function fetchPipelineDeals(apiKey) {
+  // Fetch only active pipeline + meeting booked deals using stage ID filter
   const deals = [];
   let after   = null;
   const props = [
     "dealname", "dealstage", "hubspot_owner_id", "amount", "closedate",
     "hs_next_activity_date", "hs_last_activity_date", "notes_last_updated",
-    "hs_lastmodifieddate",
   ].join(",");
 
   while (true) {
-    const url = `${HUBSPOT_BASE}/crm/v3/objects/deals?limit=100&properties=${props}` +
-                (after ? `&after=${after}` : "");
-    const resp = await hubspotGet(url, apiKey);
+    // Use HubSpot search API to filter by specific stage IDs — much more reliable
+    const body = {
+      filterGroups: [{
+        filters: [{
+          propertyName: "dealstage",
+          operator:     "IN",
+          values:       ALL_INCLUDED_IDS,
+        }],
+      }],
+      properties: props.split(","),
+      limit:       100,
+    };
+    if (after) body.after = after;
+
+    const resp = await hubspotPost(
+      `${HUBSPOT_BASE}/crm/v3/objects/deals/search`,
+      body,
+      apiKey
+    );
     deals.push(...(resp.results || []));
     if (resp.paging?.next?.after) {
       after = resp.paging.next.after;
@@ -253,67 +267,8 @@ async function fetchAllDeals(apiKey) {
     }
   }
 
-  // Map internal stage IDs → human readable labels
-  const stageMap = await fetchStageLabels(apiKey);
-  deals.forEach(d => {
-    d.properties.dealstage_label = stageMap[d.properties.dealstage] || d.properties.dealstage || "";
-  });
-
+  console.log(`Fetched ${deals.length} pipeline deals`);
   return deals;
-}
-
-
-async function fetchStageLabels(apiKey) {
-  const map = {};
-
-  // Try v3 pipelines endpoint first
-  try {
-    const resp = await hubspotGet(`${HUBSPOT_BASE}/crm/v3/pipelines/deals`, apiKey);
-    for (const pipeline of (resp.results || [])) {
-      for (const stage of (pipeline.stages || [])) {
-        map[stage.id] = stage.label;
-      }
-    }
-    if (Object.keys(map).length > 0) {
-      console.log(`Loaded ${Object.keys(map).length} stage labels from v3 pipelines`);
-      return map;
-    }
-  } catch (e) {
-    console.warn("v3 pipelines endpoint failed:", e.message);
-  }
-
-  // Fallback: try CRM v3 properties endpoint to get dealstage enum values
-  try {
-    const resp = await hubspotGet(
-      `${HUBSPOT_BASE}/crm/v3/properties/deals/dealstage`,
-      apiKey
-    );
-    for (const option of (resp.options || [])) {
-      map[option.value] = option.label;
-    }
-    if (Object.keys(map).length > 0) {
-      console.log(`Loaded ${Object.keys(map).length} stage labels from properties endpoint`);
-      return map;
-    }
-  } catch (e) {
-    console.warn("Properties endpoint failed:", e.message);
-  }
-
-  // Last resort: use the deals properties API
-  try {
-    const resp = await hubspotGet(
-      `${HUBSPOT_BASE}/properties/v2/deals/properties/named/dealstage`,
-      apiKey
-    );
-    for (const option of (resp.options || [])) {
-      map[option.value] = option.label;
-    }
-    console.log(`Loaded ${Object.keys(map).length} stage labels from v2 properties`);
-  } catch (e) {
-    console.warn("v2 properties endpoint failed:", e.message);
-  }
-
-  return map;
 }
 
 
@@ -334,17 +289,12 @@ async function fetchOwners(apiKey) {
 
 
 async function fetchDealContactRoles(apiKey, dealIds) {
-  // For each deal, fetch associated contacts and check their influence property.
-  // Champion = influence "4 - Champion"
-  // DM       = influence "6 - Decision Maker"
-  // We also track which deals have any contacts at all (for hygiene check).
-
-  const championDealIds  = new Set();
-  const dmDealIds        = new Set();
+  const championDealIds   = new Set();
+  const dmDealIds         = new Set();
   const dealsWithContacts = new Set();
 
-  // Step 1: batch fetch contact associations for all deals
-  const contactIdsByDeal = new Map(); // dealId → [contactId, ...]
+  // Batch fetch contact associations
+  const contactIdsByDeal = new Map();
 
   for (let i = 0; i < dealIds.length; i += 100) {
     const batch = dealIds.slice(i, i + 100);
@@ -355,7 +305,7 @@ async function fetchDealContactRoles(apiKey, dealIds) {
         apiKey
       );
       for (const result of (resp.results || [])) {
-        const dealId = result.from?.id;
+        const dealId     = result.from?.id;
         if (!dealId) continue;
         const contactIds = (result.to || []).map(t => t.id).filter(Boolean);
         if (contactIds.length > 0) {
@@ -364,25 +314,22 @@ async function fetchDealContactRoles(apiKey, dealIds) {
         }
       }
     } catch (e) {
-      console.warn("Association batch fetch error:", e.message);
+      console.warn("Association batch error:", e.message);
     }
   }
 
-  // Step 2: collect all unique contact IDs across all deals
+  // Collect all unique contact IDs
   const allContactIds = [...new Set([...contactIdsByDeal.values()].flat())];
 
-  // Step 3: batch fetch contact influence properties
-  const contactInfluence = new Map(); // contactId → influence value
+  // Batch fetch influence property for all contacts
+  const contactInfluence = new Map();
 
   for (let i = 0; i < allContactIds.length; i += 100) {
     const batch = allContactIds.slice(i, i + 100);
     try {
       const resp = await hubspotPost(
         `${HUBSPOT_BASE}/crm/v3/objects/contacts/batch/read`,
-        {
-          inputs:     batch.map(id => ({ id })),
-          properties: ["influence"],
-        },
+        { inputs: batch.map(id => ({ id })), properties: ["influence"] },
         apiKey
       );
       for (const contact of (resp.results || [])) {
@@ -390,11 +337,11 @@ async function fetchDealContactRoles(apiKey, dealIds) {
         if (influence) contactInfluence.set(contact.id, influence);
       }
     } catch (e) {
-      console.warn("Contact batch fetch error:", e.message);
+      console.warn("Contact batch error:", e.message);
     }
   }
 
-  // Step 4: for each deal, check if any associated contact has champion/DM influence
+  // Check each deal's contacts for champion/DM influence
   for (const [dealId, contactIds] of contactIdsByDeal.entries()) {
     for (const cid of contactIds) {
       const influence = contactInfluence.get(cid) || "";
