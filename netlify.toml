@@ -1,0 +1,6 @@
+[build]
+  functions = "netlify/functions"
+  publish   = "."
+
+# The dashboard lives at your Netlify URL root (index.html)
+# Data is fetched live from /.netlify/functions/hubspot-data on every page load

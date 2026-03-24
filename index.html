@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pipeline Pressure Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f172a;color:#f1f5f9;min-height:100vh}
+#pw-gate{position:fixed;inset:0;background:#0f172a;display:flex;align-items:center;justify-content:center;z-index:9999}
+#pw-box{background:#1e293b;border:1px solid #1e3a5f;border-radius:16px;padding:48px 40px;width:340px;text-align:center}
+#pw-box h2{font-size:20px;font-weight:700;color:#f1f5f9;margin-bottom:6px}
+#pw-box p{font-size:13px;color:#64748b;margin-bottom:28px}
+#pw-input{width:100%;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 16px;color:#f1f5f9;font-size:15px;text-align:center;letter-spacing:2px;outline:none}
+#pw-input:focus{border-color:#2563eb}
+#pw-btn{margin-top:14px;width:100%;background:#2563eb;border:none;border-radius:8px;padding:12px;color:#fff;font-size:14px;font-weight:600;cursor:pointer}
+#pw-btn:hover{background:#1d4ed8}
+#pw-err{color:#f87171;font-size:12px;margin-top:10px;min-height:16px}
+#loading{position:fixed;inset:0;background:#0f172a;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9998;gap:16px}
+#loading p{color:#64748b;font-size:14px}
+.spinner{width:36px;height:36px;border:3px solid #1e3a5f;border-top-color:#2563eb;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+a{color:inherit;text-decoration:none}
+.header{background:linear-gradient(135deg,#1e3a5f 0%,#0f172a 100%);border-bottom:1px solid #1e40af;padding:24px 36px;display:flex;align-items:center;justify-content:space-between}
+.header h1{font-size:24px;font-weight:700;color:#f8fafc}
+.header p{font-size:13px;color:#94a3b8;margin-top:3px}
+.badge{background:#1e3a5f;border:1px solid #2563eb;border-radius:8px;padding:8px 16px;text-align:center}
+.badge .n{font-size:26px;font-weight:700;color:#60a5fa}
+.badge .l{font-size:10px;color:#94a3b8;letter-spacing:.5px;text-transform:uppercase}
+.live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#22c55e;margin-right:6px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.sumbar{display:flex;gap:1px;background:#1e293b;border-bottom:1px solid #1e3a5f}
+.sc{flex:1;padding:14px 18px;background:#0f172a}
+.sc .n{font-size:30px;font-weight:800;line-height:1}
+.sc .l{font-size:11px;color:#64748b;margin-top:3px}
+.red .n{color:#f87171}.ylw .n{color:#facc15}.blu .n{color:#38bdf8}.org .n{color:#fb923c}.pur .n{color:#c084fc}
+.content{padding:28px 36px}
+.slabel{font-size:11px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:#475569;margin-bottom:18px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px}
+.full{grid-column:1/-1}
+.card{background:#1e293b;border:1px solid #1e3a5f;border-radius:12px;overflow:hidden}
+.card.urg{border-color:#dc2626;background:#1a1a2e}
+.card-head{padding:18px 20px 0;display:flex;align-items:flex-start;justify-content:space-between}
+.ct{font-size:15px;font-weight:600;color:#f1f5f9}
+.cs{font-size:12px;color:#64748b;margin-top:2px}
+.tag{font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;padding:3px 8px;border-radius:4px;white-space:nowrap}
+.t-red{background:#450a0a;color:#f87171;border:1px solid #dc2626}
+.t-org{background:#431407;color:#fb923c;border:1px solid #c2410c}
+.t-ylw{background:#422006;color:#facc15;border:1px solid #a16207}
+.t-blu{background:#0c1a3a;color:#38bdf8;border:1px solid #0284c7}
+.t-pur{background:#2e1065;color:#c084fc;border:1px solid #7c3aed}
+.chart-wrap{padding:12px 16px 16px;height:200px;position:relative}
+.rep-tabs{display:flex;gap:0;border-top:1px solid #0f172a;overflow-x:auto}
+.rtab{flex:1;padding:8px 4px;font-size:12px;font-weight:600;color:#64748b;text-align:center;cursor:pointer;border-right:1px solid #0f172a;background:#1a2744;transition:all .15s;white-space:nowrap;min-width:0}
+.rtab:hover{background:#1e3a5f;color:#93c5fd}
+.rtab.active{background:#0f172a;color:#f1f5f9;border-bottom:2px solid #2563eb}
+.rtab .cnt{display:inline-block;background:#374151;border-radius:10px;font-size:10px;padding:1px 6px;margin-left:4px}
+.rtab.active .cnt{background:#1e40af;color:#93c5fd}
+.deal-panel{display:none;border-top:1px solid #1e293b}
+.deal-panel.show{display:block}
+.deal-table{width:100%;border-collapse:collapse;font-size:12px}
+.deal-table th{padding:8px 12px;font-size:10px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:.6px;text-align:left;background:#0f172a;border-bottom:1px solid #1e293b}
+.deal-table td{padding:8px 12px;color:#cbd5e1;border-bottom:1px solid #0f172a}
+.deal-table tr:last-child td{border-bottom:none}
+.deal-table tr:hover td{background:#1e2d48}
+.deal-link{color:#60a5fa;font-weight:500}
+.deal-link:hover{color:#93c5fd;text-decoration:underline}
+.pill{display:inline-block;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600}
+.pill-red{background:#450a0a;color:#fca5a5}
+.pill-org{background:#431407;color:#fdba74}
+.pill-ylw{background:#3d2000;color:#fde68a}
+.empty{padding:16px 12px;color:#475569;font-size:12px;text-align:center;font-style:italic}
+.stbl{width:100%;border-collapse:collapse;font-size:13px}
+.stbl th{padding:10px 14px;font-size:11px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:.7px;text-align:left;border-bottom:1px solid #1e3a5f}
+.stbl th.r{text-align:right}
+.stbl td{padding:10px 14px;color:#cbd5e1;border-bottom:1px solid #0f172a}
+.stbl td.rn{font-weight:700;color:#f1f5f9}
+.stbl td.r{text-align:right;font-weight:700}
+.stbl td.r-total{text-align:right;font-size:18px;font-weight:900}
+.stbl tr:last-child td{border-bottom:none}
+.stbl tr:hover td{background:#0f1f38}
+.rb{display:inline-block;width:20px;height:20px;border-radius:50%;font-size:10px;font-weight:700;text-align:center;line-height:20px;margin-right:7px}
+.r1{background:#7f1d1d;color:#fca5a5}.r2{background:#7c2d12;color:#fdba74}.r3{background:#713f12;color:#fde68a}.r4{background:#1e3a5f;color:#93c5fd}.r5{background:#14532d;color:#86efac}.r6{background:#3b0764;color:#d8b4fe}
+.mbar{display:inline-block;height:5px;border-radius:3px;vertical-align:middle;margin-left:8px;background:#ef4444}
+.hero{background:linear-gradient(135deg,#450a0a 0%,#1a0a0a 100%);border-bottom:3px solid #dc2626;padding:28px 36px;display:flex;align-items:center;gap:40px}
+.hero-num{font-size:140px;font-weight:900;color:#ef4444;line-height:1;letter-spacing:-6px;text-shadow:0 0 60px rgba(239,68,68,.5);min-width:220px;text-align:center}
+.hero-right{flex:1}
+.hero-label{font-size:22px;font-weight:800;color:#fca5a5;letter-spacing:.8px;text-transform:uppercase}
+.hero-sub{font-size:13px;color:#ef4444;margin-top:8px;opacity:.85}
+.hero-pills{display:flex;gap:12px;margin-top:16px;flex-wrap:wrap}
+.hpill{background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.35);border-radius:10px;padding:8px 18px;font-size:12px;color:#fca5a5;text-align:center}
+.hpill b{color:#f87171;font-size:22px;font-weight:900;display:block;margin-bottom:2px;line-height:1}
+.footer{text-align:center;padding:20px;font-size:11px;color:#334155;border-top:1px solid #1e293b;margin-top:4px}
+.error-bar{background:#450a0a;border:1px solid #dc2626;border-radius:8px;padding:12px 16px;margin:16px 36px;font-size:13px;color:#fca5a5}
+</style>
+</head>
+<body>
+
+<div id="pw-gate">
+  <div id="pw-box">
+    <h2>&#128274; Pipeline Dashboard</h2>
+    <p>Pirros Sales Team &mdash; Internal Use Only</p>
+    <input id="pw-input" type="password" placeholder="Enter password" autofocus />
+    <button id="pw-btn" onclick="checkPw()">Unlock</button>
+    <div id="pw-err"></div>
+  </div>
+</div>
+
+<div id="loading" style="display:none">
+  <div class="spinner"></div>
+  <p>Pulling live data from HubSpot&hellip;</p>
+</div>
+
+<div id="main-content" style="display:none">
+
+<div class="header">
+  <div>
+    <h1>Pipeline Pressure Dashboard</h1>
+    <p id="header-sub"><span class="live-dot"></span>Live &middot; Pirros Sales Team &middot; Loading&hellip;</p>
+  </div>
+  <div style="display:flex;gap:10px">
+    <div class="badge"><div class="n" id="total-deals">—</div><div class="l">Pipeline Deals</div></div>
+  </div>
+</div>
+
+<div class="hero">
+  <div class="hero-num" id="hero-num">—</div>
+  <div class="hero-right">
+    <div class="hero-label" id="hero-label">&#128308; Loading Pipeline Issues&hellip;</div>
+    <div class="hero-sub" id="hero-sub">Fetching live data from HubSpot</div>
+    <div class="hero-pills" id="hero-pills"></div>
+  </div>
+</div>
+
+<div class="sumbar">
+  <div class="sc red"><div class="n" id="sum-stag">—</div><div class="l">Stagnating (14d+)</div></div>
+  <div class="sc ylw"><div class="n" id="sum-champ">—</div><div class="l">No Champion</div></div>
+  <div class="sc blu"><div class="n" id="sum-next">—</div><div class="l">No Next Activity Date</div></div>
+  <div class="sc org"><div class="n" id="sum-hyg">—</div><div class="l">Hygiene Gaps</div></div>
+  <div class="sc pur"><div class="n" id="sum-mtg">—</div><div class="l">Mtg Booked &middot; Overdue</div></div>
+</div>
+
+<div id="error-container"></div>
+
+<div class="content">
+<div class="slabel">Deal health by account executive &mdash; active pipeline only &mdash; click any bar or rep tab to see deals &rarr; HubSpot</div>
+
+<div class="grid">
+
+<div class="card urg">
+  <div class="card-head">
+    <div><div class="ct">&#128308; Stagnating Deals</div><div class="cs">No activity in 14+ days</div></div>
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag t-red">High Risk</span><a href="https://app.hubspot.com/contacts/22763853/deals" target="_blank" style="font-size:11px;color:#60a5fa;white-space:nowrap">View in HubSpot &#8599;</a></div>
+  </div>
+  <div class="chart-wrap"><canvas id="cStag"></canvas></div>
+  <div class="rep-tabs" id="tabs-stag"></div>
+  <div id="panels-stag"></div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <div><div class="ct">&#128993; No Champion Identified</div><div class="cs">Scoping &rarr; Commit deals with no champion contact role set</div></div>
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag t-ylw">Critical Volume</span><a href="https://app.hubspot.com/contacts/22763853/deals" target="_blank" style="font-size:11px;color:#60a5fa;white-space:nowrap">View in HubSpot &#8599;</a></div>
+  </div>
+  <div class="chart-wrap"><canvas id="cChamp"></canvas></div>
+  <div class="rep-tabs" id="tabs-champ"></div>
+  <div id="panels-champ"></div>
+</div>
+
+<div class="card urg">
+  <div class="card-head">
+    <div><div class="ct">&#128204; No Decision Maker Identified</div><div class="cs">Validation &amp; Commit deals with no DM contact role</div></div>
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag t-red">Priority Flag</span><a href="https://app.hubspot.com/contacts/22763853/deals" target="_blank" style="font-size:11px;color:#60a5fa;white-space:nowrap">View in HubSpot &#8599;</a></div>
+  </div>
+  <div class="chart-wrap"><canvas id="cDm"></canvas></div>
+  <div class="rep-tabs" id="tabs-dm"></div>
+  <div id="panels-dm"></div>
+</div>
+
+<div class="card urg">
+  <div class="card-head">
+    <div><div class="ct">&#128309; No Next Activity Date</div><div class="cs">Active pipeline deals with no meeting, task, or activity scheduled</div></div>
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag t-blu">Action Required</span><a href="https://app.hubspot.com/contacts/22763853/deals" target="_blank" style="font-size:11px;color:#60a5fa;white-space:nowrap">View in HubSpot &#8599;</a></div>
+  </div>
+  <div class="chart-wrap"><canvas id="cNext"></canvas></div>
+  <div class="rep-tabs" id="tabs-next"></div>
+  <div id="panels-next"></div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <div><div class="ct">&#128992; CRM Hygiene Gaps</div><div class="cs">Missing: Amount, Close Date, or Next Activity</div></div>
+    <div style="display:flex;align-items:center;gap:8px"><span class="tag t-org">Data Quality</span><a href="https://app.hubspot.com/contacts/22763853/deals" target="_blank" style="font-size:11px;color:#60a5fa;white-space:nowrap">View in HubSpot &#8599;</a></div>
+  </div>
+  <div class="chart-wrap"><canvas id="cHyg"></canvas></div>
+  <div class="rep-tabs" id="tabs-hyg"></div>
+  <div id="panels-hyg"></div>
+</div>
+
+<div class="card full">
+  <div class="card-head">
+    <div><div class="ct">&#128197; Meeting Booked &mdash; Overdue / No Date Set</div><div class="cs">Scheduled meeting date has passed &middot; follow up or rebook</div></div>
+    <span class="tag t-pur">Needs Follow-Up</span>
+  </div>
+  <div class="chart-wrap"><canvas id="cMtg"></canvas></div>
+  <div class="rep-tabs" id="tabs-mtg"></div>
+  <div id="panels-mtg"></div>
+</div>
+
+</div>
+
+<div class="card full">
+  <div class="card-head" style="padding-bottom:16px">
+    <div><div class="ct">&#128202; Rep Scorecard &mdash; All Health Checks</div><div class="cs">Active pipeline &middot; Ranked by total flagged &middot; lower is better</div></div>
+  </div>
+  <table class="stbl">
+    <thead><tr>
+      <th>Rep</th><th class="r">Total Deals</th>
+      <th class="r">Stagnating</th><th class="r">No Champion</th>
+      <th class="r">No DM</th>
+      <th class="r">No Next Activity</th><th class="r">Hygiene Gaps</th>
+      <th class="r">Mtg Overdue</th>
+      <th class="r">Total Flagged</th>
+    </tr></thead>
+    <tbody id="scorecard-body"></tbody>
+  </table>
+</div>
+
+</div>
+
+<div class="footer" id="footer-text">Active pipeline deals only (Discovery, Scoping, Validation, Commit) &middot; Live from HubSpot</div>
+</div>
+
+<script>
+const PW = 'bimreaper';
+
+function checkPw() {
+  const val = document.getElementById('pw-input').value;
+  if (val === PW) {
+    document.getElementById('pw-gate').style.display = 'none';
+    document.getElementById('loading').style.display = 'flex';
+    loadDashboard();
+  } else {
+    document.getElementById('pw-err').textContent = 'Incorrect password. Try again.';
+    document.getElementById('pw-input').value = '';
+    document.getElementById('pw-input').focus();
+  }
+}
+document.getElementById('pw-input').addEventListener('keydown', e => { if (e.key === 'Enter') checkPw(); });
+
+// ── Data loading ─────────────────────────────────────────────────────────────
+
+async function loadDashboard() {
+  try {
+    const resp = await fetch('/.netlify/functions/hubspot-data');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    renderDashboard(data);
+  } catch (err) {
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('main-content').style.display = 'block';
+    document.getElementById('error-container').innerHTML =
+      `<div class="error-bar">&#9888; Could not load live data: ${err.message}. Check Netlify function logs.</div>`;
+    console.error('Dashboard load error:', err);
+  }
+}
+
+// ── Rendering ────────────────────────────────────────────────────────────────
+
+function renderDashboard(data) {
+  const { summary, reps, repStats, lastUpdated } = data;
+  const d = data.data;
+
+  // Header
+  const updated = new Date(lastUpdated).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
+  });
+  document.getElementById('header-sub').innerHTML =
+    `<span class="live-dot"></span>Live &middot; Pirros Sales Team &middot; Updated ${updated}`;
+  document.getElementById('total-deals').textContent = summary.totalDeals;
+
+  // Hero
+  document.getElementById('hero-num').textContent = summary.totalIssues;
+  document.getElementById('hero-label').innerHTML =
+    `&#128308; Total Pipeline Issues &mdash; ${new Date().toLocaleDateString('en-US', {month:'long',day:'numeric',year:'numeric'})}`;
+  document.getElementById('hero-sub').textContent =
+    `Across ${reps.length} reps &middot; 5 health checks &middot; ${summary.totalDeals} active deals &middot; Every issue below needs action`;
+
+  const pills = [
+    { n: summary.stagnating,  l: 'Stagnating' },
+    { n: summary.noChampion,  l: 'No Champion' },
+    { n: summary.noDM,        l: 'No Decision Maker' },
+    { n: summary.noNextStep,  l: 'No Next Step' },
+    { n: summary.hygieneGaps, l: 'Hygiene Gaps' },
+    { n: summary.mtgOverdue,  l: 'Mtg Overdue' },
+  ];
+  document.getElementById('hero-pills').innerHTML = pills
+    .map(p => `<div class="hpill"><b>${p.n}</b>${p.l}</div>`).join('');
+
+  // Summary bar
+  document.getElementById('sum-stag').textContent  = summary.stagnating;
+  document.getElementById('sum-champ').textContent = summary.noChampion;
+  document.getElementById('sum-next').textContent  = summary.noNextStep;
+  document.getElementById('sum-hyg').textContent   = summary.hygieneGaps;
+  document.getElementById('sum-mtg').textContent   = summary.mtgOverdue;
+
+  // Charts
+  const chartCfg = (label, counts, color) => ({
+    type: 'bar',
+    data: { labels: reps, datasets: [{ label, data: counts, backgroundColor: color, borderColor: color, borderWidth: 1, borderRadius: 4 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y} deals` } } },
+      scales: {
+        x: { ticks: { color: '#94a3b8', font: { size: 11 } }, grid: { color: '#1e293b' } },
+        y: { ticks: { color: '#94a3b8', font: { size: 11 }, stepSize: 1 }, grid: { color: '#1e293b' }, beginAtZero: true }
+      },
+      onClick: (e, els) => {
+        if (els.length) {
+          const rep = reps[els[0].index];
+          const sec = e.chart.canvas.id.replace('cStag','stag').replace('cChamp','champ')
+            .replace('cDm','dm').replace('cNext','next').replace('cHyg','hyg')
+            .replace('cMtg','mtg').replace('cPunt','punt');
+          activateTab(sec, rep);
+        }
+      }
+    }
+  });
+
+  new Chart(document.getElementById('cStag'),  chartCfg('Stagnating',        reps.map(r => (d.stag[r]  || []).length), 'rgba(239,68,68,.7)'));
+  new Chart(document.getElementById('cChamp'), chartCfg('No Champion',        reps.map(r => (d.champ[r] || []).length), 'rgba(234,179,8,.7)'));
+  new Chart(document.getElementById('cDm'),    chartCfg('No Decision Maker',  reps.map(r => (d.dm[r]    || []).length), 'rgba(239,68,68,.9)'));
+  new Chart(document.getElementById('cNext'),  chartCfg('No Next Step',       reps.map(r => (d.next[r]  || []).length), 'rgba(56,189,248,.7)'));
+  new Chart(document.getElementById('cHyg'),   chartCfg('Hygiene Gaps',       reps.map(r => (d.hyg[r]   || []).length), 'rgba(251,146,60,.7)'));
+  new Chart(document.getElementById('cMtg'),   chartCfg('Mtg Overdue',        reps.map(r => (d.mtg[r]   || []).length), 'rgba(167,139,250,.7)'));
+
+  // Tabs + deal panels
+  const sections = { stag: d.stag, champ: d.champ, dm: d.dm, next: d.next, hyg: d.hyg, mtg: d.mtg };
+  Object.entries(sections).forEach(([secKey, dataObj]) => buildTabs(secKey, dataObj, reps));
+
+  // Scorecard
+  const sorted = [...repStats].sort((a, b) => b.totalFlagged - a.totalFlagged);
+  const rankColors = ['r1','r2','r3','r4','r5','r6'];
+  const tbody = document.getElementById('scorecard-body');
+  tbody.innerHTML = sorted.map((rep, i) => `
+    <tr>
+      <td class="rn"><span class="rb ${rankColors[i] || 'r6'}">${i+1}</span>${rep.name}</td>
+      <td class="r">${rep.total}</td>
+      <td class="r">${rep.stag}</td>
+      <td class="r">${rep.champ}</td>
+      <td class="r">${rep.dm}</td>
+      <td class="r">${rep.next}</td>
+      <td class="r">${rep.hyg}</td>
+      <td class="r">${rep.mtg}</td>
+      <td class="r-total"><span class="${rep.totalFlagged > 20 ? 'hot' : rep.totalFlagged > 10 ? 'warm' : 'ok'}">${rep.totalFlagged}</span></td>
+    </tr>`).join('');
+
+  // Footer
+  document.getElementById('footer-text').textContent =
+    `Active pipeline deals only (Discovery, Scoping, Validation, Commit) · ${summary.totalDeals} deals · Click any deal to open in HubSpot · Live data`;
+
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('main-content').style.display = 'block';
+}
+
+// ── Tab / panel builder ───────────────────────────────────────────────────────
+
+function buildTabs(secKey, dataObj, reps) {
+  const tabsEl   = document.getElementById('tabs-' + secKey);
+  const panelsEl = document.getElementById('panels-' + secKey);
+  if (!tabsEl || !panelsEl) return;
+
+  reps.forEach((rep, i) => {
+    const deals = dataObj[rep] || [];
+    const tab = document.createElement('div');
+    tab.className = 'rtab' + (i === 0 ? ' active' : '');
+    tab.dataset.rep = rep; tab.dataset.sec = secKey;
+    tab.innerHTML = rep + '<span class="cnt">' + deals.length + '</span>';
+    tab.onclick = () => activateTab(secKey, rep);
+    tabsEl.appendChild(tab);
+
+    const panel = document.createElement('div');
+    panel.className = 'deal-panel' + (i === 0 ? ' show' : '');
+    panel.id = 'panel-' + secKey + '-' + rep;
+
+    if (deals.length === 0) {
+      panel.innerHTML = '<div class="empty">No flagged deals for ' + rep + '</div>';
+    } else {
+      const stageCol = secKey === 'stag' ? '<th>Days Idle</th>' : secKey === 'mtg' ? '<th>Days Overdue</th>' : '<th>Stage</th>';
+      let rows = '';
+      deals.forEach(d => {
+        const extra = parseInt(d.extra);
+        const badge = extra > 20
+          ? `<span class="pill pill-red">${d.extra}d</span>`
+          : extra > 10
+            ? `<span class="pill pill-org">${d.extra}d</span>`
+            : `<span class="pill pill-ylw">${d.extra}d</span>`;
+        const stageCell = secKey === 'stag' ? badge : d.stage;
+        rows += `<tr><td><a class="deal-link" href="${d.url}" target="_blank">${d.name} &#8599;</a></td><td>${d.amount}</td><td>${stageCell}</td><td>${d.close}</td></tr>`;
+      });
+      panel.innerHTML = `<table class="deal-table"><thead><tr><th>Deal</th><th>Amount</th>${stageCol}<th>Close Date</th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+    panelsEl.appendChild(panel);
+  });
+}
+
+function activateTab(secKey, rep) {
+  document.querySelectorAll('#tabs-' + secKey + ' .rtab').forEach(t =>
+    t.classList.toggle('active', t.dataset.rep === rep));
+  document.querySelectorAll('#panels-' + secKey + ' .deal-panel').forEach(p =>
+    p.classList.toggle('show', p.id === 'panel-' + secKey + '-' + rep));
+}
+</script>
+</body>
+</html>
