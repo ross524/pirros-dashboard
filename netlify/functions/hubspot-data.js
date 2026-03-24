@@ -159,9 +159,9 @@ exports.handler = async (event) => {
         }
       }
 
-      // ── Meeting Booked Overdue: ONLY flag if date is set AND is in the past
-      // If no date is set, rep may have it booked outside HubSpot — don't flag
-      if (isMtgBooked && nextActDate && nextActOverdue) {
+      // ── Meeting Booked Overdue: flag if notes_next_activity_date is before today
+      // Future date = fine. No date = fine. Only past date = flagged.
+      if (isMtgBooked && nextActDate && nextActDate < todayStr) {
         classified.mtg[repName].push({ ...dealObj, extra: nextActDate });
       }
     }
