@@ -133,12 +133,12 @@ exports.handler = async (event) => {
       }
 
       // ── No Champion: Discovery → Commit ───────────────────────────────
-      if (isActive && CHAMPION_STAGE_IDS.includes(stageId) && !championDealIds.has(deal.id)) {
+      if (isActive && CHAMPION_STAGE_IDS.includes(stageId) && !championDealIds.has(String(deal.id))) {
         classified.champ[repName].push(dealObj);
       }
 
       // ── No DM: Validation + Commit only ───────────────────────────────
-      if (isActive && DM_STAGE_IDS.includes(stageId) && !dmDealIds.has(deal.id)) {
+      if (isActive && DM_STAGE_IDS.includes(stageId) && !dmDealIds.has(String(deal.id))) {
         classified.dm[repName].push(dealObj);
       }
 
@@ -153,15 +153,16 @@ exports.handler = async (event) => {
         if (!props.amount || Number(props.amount) === 0) issues.push("No amount");
         if (!props.closedate)                             issues.push("No close date");
         if (!nextActDate || nextActOverdue)               issues.push("No next step");
-        if (!dealsWithContacts.has(deal.id))              issues.push("No contacts");
+        if (!dealsWithContacts.has(String(deal.id)))      issues.push("No contacts");
         if (issues.length > 0) {
           classified.hyg[repName].push({ ...dealObj, extra: issues.join(" · ") });
         }
       }
 
-      // ── Meeting Booked Overdue: only if next activity date is before today
-      if (isMtgBooked && (!nextActDate || nextActOverdue)) {
-        classified.mtg[repName].push({ ...dealObj, extra: nextActDate || "no date" });
+      // ── Meeting Booked Overdue: ONLY flag if date is set AND is in the past
+      // If no date is set, rep may have it booked outside HubSpot — don't flag
+      if (isMtgBooked && nextActDate && nextActOverdue) {
+        classified.mtg[repName].push({ ...dealObj, extra: nextActDate });
       }
     }
 
@@ -282,31 +283,35 @@ async function fetchDealContactRoles(apiKey, dealIds) {
     } catch (e) { console.warn("Association batch error:", e.message); }
   }
 
-  // Batch fetch influence for all contacts
+  // Batch fetch influence for all contacts (paginate in batches of 100)
   const allContactIds    = [...new Set([...contactIdsByDeal.values()].flat())];
   const contactInfluence = new Map();
+
+  console.log(`Fetching influence for ${allContactIds.length} contacts`);
 
   for (let i = 0; i < allContactIds.length; i += 100) {
     const batch = allContactIds.slice(i, i + 100);
     try {
       const resp = await hubspotPost(
         `${HUBSPOT_BASE}/crm/v3/objects/contacts/batch/read`,
-        { inputs: batch.map(id => ({ id })), properties: ["influence"] },
+        { inputs: batch.map(id => ({ id: String(id) })), properties: ["influence"] },
         apiKey
       );
       for (const c of (resp.results || [])) {
         const inf = (c.properties?.influence || "").trim();
-        if (inf) contactInfluence.set(c.id, inf);
+        if (inf) contactInfluence.set(String(c.id), inf);
       }
-    } catch (e) { console.warn("Contact batch error:", e.message); }
+    } catch (e) { console.warn(`Contact batch error (batch ${i}-${i+100}):`, e.message); }
   }
 
-  // Map influence to deals
+  console.log(`Found influence values for ${contactInfluence.size} contacts`);
+
+  // Map influence to deals — use string IDs consistently
   for (const [dealId, contactIds] of contactIdsByDeal.entries()) {
     for (const cid of contactIds) {
-      const inf = contactInfluence.get(cid) || "";
-      if (inf === CHAMPION_INFLUENCE) championDealIds.add(dealId);
-      if (inf === DM_INFLUENCE)       dmDealIds.add(dealId);
+      const inf = contactInfluence.get(String(cid)) || "";
+      if (inf === CHAMPION_INFLUENCE) championDealIds.add(String(dealId));
+      if (inf === DM_INFLUENCE)       dmDealIds.add(String(dealId));
     }
   }
 
