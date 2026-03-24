@@ -265,6 +265,8 @@ async function fetchAllDeals(apiKey) {
 
 async function fetchStageLabels(apiKey) {
   const map = {};
+
+  // Try v3 pipelines endpoint first
   try {
     const resp = await hubspotGet(`${HUBSPOT_BASE}/crm/v3/pipelines/deals`, apiKey);
     for (const pipeline of (resp.results || [])) {
@@ -272,9 +274,45 @@ async function fetchStageLabels(apiKey) {
         map[stage.id] = stage.label;
       }
     }
+    if (Object.keys(map).length > 0) {
+      console.log(`Loaded ${Object.keys(map).length} stage labels from v3 pipelines`);
+      return map;
+    }
   } catch (e) {
-    console.warn("Could not fetch stage labels:", e.message);
+    console.warn("v3 pipelines endpoint failed:", e.message);
   }
+
+  // Fallback: try CRM v3 properties endpoint to get dealstage enum values
+  try {
+    const resp = await hubspotGet(
+      `${HUBSPOT_BASE}/crm/v3/properties/deals/dealstage`,
+      apiKey
+    );
+    for (const option of (resp.options || [])) {
+      map[option.value] = option.label;
+    }
+    if (Object.keys(map).length > 0) {
+      console.log(`Loaded ${Object.keys(map).length} stage labels from properties endpoint`);
+      return map;
+    }
+  } catch (e) {
+    console.warn("Properties endpoint failed:", e.message);
+  }
+
+  // Last resort: use the deals properties API
+  try {
+    const resp = await hubspotGet(
+      `${HUBSPOT_BASE}/properties/v2/deals/properties/named/dealstage`,
+      apiKey
+    );
+    for (const option of (resp.options || [])) {
+      map[option.value] = option.label;
+    }
+    console.log(`Loaded ${Object.keys(map).length} stage labels from v2 properties`);
+  } catch (e) {
+    console.warn("v2 properties endpoint failed:", e.message);
+  }
+
   return map;
 }
 
