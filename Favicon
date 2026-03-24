@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 455.71 581.43">
+  <defs>
+    <linearGradient id="lg1"><stop style="stop-color:#009a11" offset="0"/><stop style="stop-color:#00cb17" offset="1"/></linearGradient>
+    <linearGradient id="lg2" y2="139.51" xlink:href="#lg1" gradientUnits="userSpaceOnUse" x2="-286.43" y1="139.51" x1="-742.14"/>
+    <linearGradient id="lg3" y2="139.51" xlink:href="#lg1" gradientUnits="userSpaceOnUse" x2="-286.43" gradientTransform="matrix(.76923 0 0 2.5351 -118.68 69.419)" y1="139.51" x1="-742.14"/>
+  </defs>
+  <g transform="translate(742.14 -53.076)">
+    <rect style="stroke-linejoin:round;stroke:#005e04;stroke-width:10;fill:url(#lg3)" height="412.86" width="342.86" y="216.65" x="-685.71"/>
+    <rect style="stroke-linejoin:round;stroke:#005e04;stroke-width:10;fill:url(#lg2)" height="162.86" width="445.71" y="58.076" x="-737.14"/>
+    <rect style="fill:#00d818" height="152.5" width="68.596" y="63.076" x="-467.87"/>
+    <rect style="fill:#00d818" height="152.5" width="27.168" y="63.076" x="-381.3"/>
+    <rect style="fill:#00d818" height="396.79" width="68.596" y="226.29" x="-492.16"/>
+    <rect style="fill:#00d818" height="396.79" width="27.168" y="226.29" x="-405.58"/>
+    <rect style="fill:#00820e" height="152.66" width="51.429" y="63.097" x="-731.79"/>
+    <rect style="fill:#00820e" height="398.37" width="51.429" y="225.95" x="-680.36"/>
+    <rect style="fill:#005e04" height="156.57" width="16.162" y="59.382" x="-739.43"/>
+    <rect style="fill:#005e04" height="403.05" width="16.162" y="224.04" x="-689.93"/>
+    <rect style="fill:#00820e" height="152.66" width="7.992" y="63.097" x="-667.79"/>
+    <rect style="fill:#00820e" height="398.63" width="7.992" y="225.73" x="-618.04"/>
+  </g>
+</svg>
