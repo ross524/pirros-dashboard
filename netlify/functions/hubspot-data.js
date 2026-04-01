@@ -310,8 +310,8 @@ async function fetchDealContactRoles(apiKey, dealIds) {
   for (const [dealId, contactIds] of contactIdsByDeal.entries()) {
     for (const cid of contactIds) {
       const inf = contactInfluence.get(String(cid)) || "";
-      if (inf === CHAMPION_INFLUENCE) championDealIds.add(String(dealId));
-      if (inf === DM_INFLUENCE)       dmDealIds.add(String(dealId));
+      if (inf.includes(CHAMPION_INFLUENCE)) championDealIds.add(String(dealId));
+      if (inf.includes(DM_INFLUENCE)) dmDealIds.add(String(dealId));
     }
   }
 
