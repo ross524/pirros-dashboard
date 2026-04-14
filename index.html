@@ -153,6 +153,7 @@ a{color:inherit;text-decoration:none}
   <div class="sc red"><div class="n" id="sum-dm">—</div><div class="l">No Decision Maker</div></div>
   <div class="sc blu"><div class="n" id="sum-next">—</div><div class="l">No Next Step</div></div>
   <div class="sc org"><div class="n" id="sum-hyg">—</div><div class="l">Hygiene Gaps</div></div>
+  <div class="sc" style=""><div class="n" id="sum-stl" style="color:#a78bfa">—</div><div class="l">In Stage 30d+</div></div>
   <div class="sc pur"><div class="n" id="sum-mtg">—</div><div class="l">Mtg Overdue</div></div>
 </div>
 
@@ -174,7 +175,7 @@ a{color:inherit;text-decoration:none}
 
 <div class="card urg">
   <div class="card-head">
-    <div><div class="ct">&#128308; Stagnating Deals</div><div class="cs">No activity in 14+ days &middot; last engagement shown</div></div>
+    <div><div class="ct">&#128308; Stagnating Deals</div><div class="cs">Last activity &gt;10 days ago, or &gt;7 days + next step &gt;5 biz days out &middot; excludes Booked &amp; large firms</div></div>
     <div style="display:flex;align-items:center;gap:6px"><span class="tag t-red">High Risk</span><a href="https://app.hubspot.com/contacts/22763853/deals" target="_blank" style="font-size:10px;color:#60a5fa;white-space:nowrap">HubSpot &#8599;</a></div>
   </div>
   <div class="chart-wrap"><canvas id="cStag"></canvas></div>
@@ -184,7 +185,7 @@ a{color:inherit;text-decoration:none}
 
 <div class="card">
   <div class="card-head">
-    <div><div class="ct">&#128993; No Champion Identified</div><div class="cs">Discovery &rarr; Commit &middot; no contact with influence = Champion</div></div>
+    <div><div class="ct">&#128993; No Champion Identified</div><div class="cs">Scoping stage only &middot; Champion or Ability to Champion accepted</div></div>
     <div style="display:flex;align-items:center;gap:6px"><span class="tag t-ylw">Action Required</span><a href="https://app.hubspot.com/contacts/22763853/deals" target="_blank" style="font-size:10px;color:#60a5fa;white-space:nowrap">HubSpot &#8599;</a></div>
   </div>
   <div class="chart-wrap"><canvas id="cChamp"></canvas></div>
@@ -194,7 +195,7 @@ a{color:inherit;text-decoration:none}
 
 <div class="card urg">
   <div class="card-head">
-    <div><div class="ct">&#128204; No Decision Maker</div><div class="cs">Validation &amp; Commit &middot; no contact with influence = Decision Maker</div></div>
+    <div><div class="ct">&#128204; No Decision Maker</div><div class="cs">Validation stage only &middot; no contact with influence = Decision Maker</div></div>
     <div style="display:flex;align-items:center;gap:6px"><span class="tag t-red">Priority Flag</span><a href="https://app.hubspot.com/contacts/22763853/deals" target="_blank" style="font-size:10px;color:#60a5fa;white-space:nowrap">HubSpot &#8599;</a></div>
   </div>
   <div class="chart-wrap"><canvas id="cDm"></canvas></div>
@@ -204,7 +205,7 @@ a{color:inherit;text-decoration:none}
 
 <div class="card">
   <div class="card-head">
-    <div><div class="ct">&#128309; No Next Activity Date</div><div class="cs">Missing or overdue &middot; today's tasks are fine</div></div>
+    <div><div class="ct">&#128309; No Next Activity Date</div><div class="cs">Next activity unknown &amp; last activity &gt;1 day ago</div></div>
     <div style="display:flex;align-items:center;gap:6px"><span class="tag t-blu">Action Required</span><a href="https://app.hubspot.com/contacts/22763853/deals" target="_blank" style="font-size:10px;color:#60a5fa;white-space:nowrap">HubSpot &#8599;</a></div>
   </div>
   <div class="chart-wrap"><canvas id="cNext"></canvas></div>
@@ -214,12 +215,22 @@ a{color:inherit;text-decoration:none}
 
 <div class="card">
   <div class="card-head">
-    <div><div class="ct">&#128992; CRM Hygiene Gaps</div><div class="cs">Missing amount, close date, next step, or contacts &middot; issues listed per deal</div></div>
+    <div><div class="ct">&#128992; CRM Hygiene Gaps</div><div class="cs">Missing amount, close date in past, DQ reason mismatch &middot; dashboard visibility only</div></div>
     <div style="display:flex;align-items:center;gap:6px"><span class="tag t-org">Data Quality</span><a href="https://app.hubspot.com/contacts/22763853/deals" target="_blank" style="font-size:10px;color:#60a5fa;white-space:nowrap">HubSpot &#8599;</a></div>
   </div>
   <div class="chart-wrap"><canvas id="cHyg"></canvas></div>
   <div class="rep-tabs" id="tabs-hyg"></div>
   <div id="panels-hyg"></div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <div><div class="ct">&#9200; Deal in Stage Too Long</div><div class="cs">Same stage for 30+ days &middot; dashboard visibility only</div></div>
+    <div style="display:flex;align-items:center;gap:6px"><span class="tag t-pur">Visibility</span><a href="https://app.hubspot.com/contacts/22763853/deals" target="_blank" style="font-size:10px;color:#60a5fa;white-space:nowrap">HubSpot &#8599;</a></div>
+  </div>
+  <div class="chart-wrap"><canvas id="cStl"></canvas></div>
+  <div class="rep-tabs" id="tabs-stageTooLong"></div>
+  <div id="panels-stageTooLong"></div>
 </div>
 
 <div class="card full">
@@ -299,6 +310,7 @@ function renderDashboard(data) {
         <div class="rep-metric red"><span>${rep.dm}</span>No DM</div>
         <div class="rep-metric blu"><span>${rep.next}</span>No Next Step</div>
         <div class="rep-metric org"><span>${rep.hyg}</span>Hygiene</div>
+        <div class="rep-metric"><span style="color:#a78bfa">${rep.stageTooLong}</span>Stage 30d+</div>
         <div class="rep-metric" style="grid-column:1/-1"><span style="color:#c084fc">${rep.mtg}</span>Mtg Overdue</div>
       </div>
     </div>`;
@@ -310,6 +322,7 @@ function renderDashboard(data) {
   document.getElementById('sum-dm').textContent    = summary.noDM;
   document.getElementById('sum-next').textContent  = summary.noNextStep;
   document.getElementById('sum-hyg').textContent   = summary.hygieneGaps;
+  document.getElementById('sum-stl').textContent   = summary.stageTooLong;
   document.getElementById('sum-mtg').textContent   = summary.mtgOverdue;
 
   // Issue banner
@@ -330,7 +343,7 @@ function renderDashboard(data) {
         y:{ticks:{color:'#94a3b8',font:{size:10},stepSize:1},grid:{color:'#1e293b'},beginAtZero:true}
       },
       onClick:(e,els)=>{
-        if(els.length){ activateTab(e.chart.canvas.id.replace('cStag','stag').replace('cChamp','champ').replace('cDm','dm').replace('cNext','next').replace('cHyg','hyg').replace('cMtg','mtg'), reps[els[0].index]); }
+        if(els.length){ activateTab(e.chart.canvas.id.replace('cStag','stag').replace('cChamp','champ').replace('cDm','dm').replace('cNext','next').replace('cHyg','hyg').replace('cStl','stageTooLong').replace('cMtg','mtg'), reps[els[0].index]); }
       }
     }
   });
@@ -340,10 +353,11 @@ function renderDashboard(data) {
   new Chart(document.getElementById('cDm'),    chartCfg('No DM',             reps.map(r=>(d.dm[r]||[]).length),    'rgba(239,68,68,.85)'));
   new Chart(document.getElementById('cNext'),  chartCfg('No Next Step',      reps.map(r=>(d.next[r]||[]).length),  'rgba(56,189,248,.7)'));
   new Chart(document.getElementById('cHyg'),   chartCfg('Hygiene Gaps',      reps.map(r=>(d.hyg[r]||[]).length),   'rgba(251,146,60,.7)'));
+  new Chart(document.getElementById('cStl'),   chartCfg('Stage 30d+',        reps.map(r=>(d.stageTooLong[r]||[]).length), 'rgba(167,139,250,.7)'));
   new Chart(document.getElementById('cMtg'),   chartCfg('Mtg Overdue',       reps.map(r=>(d.mtg[r]||[]).length),   'rgba(167,139,250,.7)'));
 
   // Build tabs
-  ['stag','champ','dm','next','hyg','mtg'].forEach(k => buildTabs(k, d[k], reps));
+  ['stag','champ','dm','next','hyg','stageTooLong','mtg'].forEach(k => buildTabs(k, d[k], reps));
 
   // Footer
   document.getElementById('footer-text').textContent =
@@ -382,6 +396,8 @@ function buildTabs(secKey, dataObj, reps) {
         extraHeader = '<th>Issues</th>';
       } else if (secKey === 'mtg') {
         extraHeader = '<th>Meeting Date</th>';
+      } else if (secKey === 'stageTooLong') {
+        extraHeader = '<th>Days in Stage</th><th>Current Stage</th>';
       } else {
         extraHeader = '<th>Stage</th>';
       }
@@ -400,6 +416,13 @@ function buildTabs(secKey, dataObj, reps) {
           extraCell = `<span class="issue-text">${d.extra}</span>`;
         } else if (secKey === 'mtg') {
           extraCell = d.extra === 'no date' ? '<span style="color:#f87171">No date set</span>' : d.extra;
+        } else if (secKey === 'stageTooLong') {
+          const stlBadge = extra >= 60
+            ? `<span class="pill pill-red">${d.extra}d</span>`
+            : extra >= 45
+              ? `<span class="pill pill-org">${d.extra}d</span>`
+              : `<span class="pill pill-ylw">${d.extra}d</span>`;
+          extraCell = `${stlBadge}</td><td>${d.stage}`;
         } else {
           extraCell = d.stage;
         }
