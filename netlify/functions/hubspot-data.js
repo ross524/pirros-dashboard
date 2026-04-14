@@ -11,12 +11,14 @@
  *   119042476             = Commit
  *
  * Health checks:
- *   Stagnating:    No activity in 14+ days (notes_last_updated) — active pipeline only
- *   No Champion:   Discovery onwards — checks contact influence = "4 - Champion"
- *   No DM:         Validation + Commit only — checks contact influence = "6 - Decision Maker"
- *   No Next Step:  notes_next_activity_date is missing OR is before today (not today)
- *   Hygiene Gaps:  Missing amount, close date, next activity, or no contacts — shows what's missing
- *   Mtg Overdue:   Meeting Booked stage where notes_next_activity_date is before today
+ *   Stagnating:      Last activity >10d ago, OR >7d + next activity >5 biz days out.
+ *                     Excludes Booked stage and design group >= 200.
+ *   No Champion:     Scoping only — influence = "4 - Champion" or "3 - Ability to Champion"
+ *   No DM:           Validation only — contact influence = "6 - Decision Maker"
+ *   No Next Step:    Next activity unknown AND last activity >1 day ago
+ *   Hygiene Gaps:    Missing amount, close date in past, DQ reason mismatch (dashboard only)
+ *   Stage Too Long:  Deal in same stage for 30+ days
+ *   Mtg Overdue:     Meeting Booked stage where notes_next_activity_date is before today
  */
 
 const HUBSPOT_BASE = "https://api.hubapi.com";
@@ -33,14 +35,17 @@ const STAGE_LABELS = {
   "119042476":             "Commit",
 };
 
-// No Champion: Discovery onwards (all active stages)
-const CHAMPION_STAGE_IDS = ACTIVE_STAGE_IDS;
+// No Champion: Scoping only (accept "ability to champion" as valid)
+const CHAMPION_STAGE_IDS = ["closedwon"]; // closedwon = Scoping in our HubSpot
 
-// No DM: Validation + Commit only
-const DM_STAGE_IDS = ["presentationscheduled", "119042476"];
+// No DM: Validation only
+const DM_STAGE_IDS = ["presentationscheduled"];
 
-const CHAMPION_INFLUENCE = "4 - Champion";
-const DM_INFLUENCE       = "6 - Decision Maker";
+// Booked stage ID (excluded from stagnation)
+const BOOKED_STAGE_ID = "decisionmakerboughtin";
+
+const CHAMPION_INFLUENCES = ["4 - Champion", "3 - Ability to Champion"];
+const DM_INFLUENCE        = "6 - Decision Maker";
 
 const REP_EMAILS = {
   "kas@pirros.com":      "Kas",
@@ -77,7 +82,7 @@ exports.handler = async (event) => {
 
     const classified = {
       stag: {}, champ: {}, dm: {},
-      next: {}, hyg:   {}, mtg: {}, punt: {},
+      next: {}, hyg:   {}, mtg: {}, punt: {}, stageTooLong: {},
     };
     REPS.forEach(rep => {
       Object.keys(classified).forEach(k => { classified[k][rep] = []; });
@@ -122,46 +127,72 @@ exports.handler = async (event) => {
         extra:        "0",
       };
 
-      // ── Stagnating: no activity in 14+ days ───────────────────────────
-      if (isActive && lastActRaw) {
-        const daysSince = Math.floor((now - new Date(lastActRaw).getTime()) / 86400000);
-        if (daysSince >= 14) {
-          classified.stag[repName].push({ ...dealObj, extra: String(daysSince) });
+      // ── Stagnating: updated rules ──────────────────────────────────────
+      // Flag if: last activity >10 days ago, OR last activity >7 days ago AND next activity >5 biz days out
+      // Exclude: Booked stage, design group size >= 200
+      const designGroupSize = parseInt(props.design_group_size__of_revit_users_ || "0", 10);
+      if (isActive && stageId !== BOOKED_STAGE_ID && designGroupSize < 200) {
+        if (lastActRaw) {
+          const daysSince = Math.floor((now - new Date(lastActRaw).getTime()) / 86400000);
+          const nextActFutureBizDays = nextActDate ? businessDaysBetween(todayStr, nextActDate) : null;
+          const rule1 = daysSince > 10;
+          const rule2 = daysSince > 7 && nextActFutureBizDays !== null && nextActFutureBizDays > 5;
+          if (rule1 || rule2) {
+            classified.stag[repName].push({ ...dealObj, extra: String(daysSince) });
+          }
+        } else {
+          // Never had any activity logged
+          classified.stag[repName].push({ ...dealObj, extra: "N/A" });
         }
-      } else if (isActive && !lastActRaw) {
-        // Never had any activity logged
-        classified.stag[repName].push({ ...dealObj, extra: "14+" });
       }
 
-      // ── No Champion: Discovery → Commit ───────────────────────────────
+      // ── No Champion: Scoping only (accept "ability to champion") ──────
       if (isActive && CHAMPION_STAGE_IDS.includes(stageId) && !championDealIds.has(String(deal.id))) {
         classified.champ[repName].push(dealObj);
       }
 
-      // ── No DM: Validation + Commit only ───────────────────────────────
+      // ── No DM: Validation only ────────────────────────────────────────
       if (isActive && DM_STAGE_IDS.includes(stageId) && !dmDealIds.has(String(deal.id))) {
         classified.dm[repName].push(dealObj);
       }
 
-      // ── No Next Activity: missing OR overdue (not including today) ─────
-      if (isActive && (!nextActDate || nextActOverdue)) {
-        classified.next[repName].push({ ...dealObj, extra: nextActDate || "none" });
+      // ── No Next Activity: unknown next activity AND last activity >1 day ago
+      if (isActive && !nextActDate) {
+        const lastActDaysAgo = lastActRaw ? Math.floor((now - new Date(lastActRaw).getTime()) / 86400000) : 999;
+        if (lastActDaysAgo > 1) {
+          classified.next[repName].push({ ...dealObj, extra: "none" });
+        }
       }
 
-      // ── Hygiene Gaps: show exactly what's missing ──────────────────────
+      // ── Hygiene Gaps: DQ mismatch, missing amount, close date in past ─
       if (isActive) {
         const issues = [];
-        if (!props.amount || Number(props.amount) === 0) issues.push("No amount");
-        if (!props.closedate)                             issues.push("No close date");
-        if (!nextActDate || nextActOverdue)               issues.push("No next step");
-        if (!dealsWithContacts.has(String(deal.id)))      issues.push("No contacts");
+        if (!props.amount || Number(props.amount) === 0) issues.push("Missing deal amount");
+        const closeDateStr = props.closedate ? props.closedate.slice(0, 10) : null;
+        if (closeDateStr && closeDateStr < todayStr) issues.push("Close date in past");
+        // DQ reason mismatch: design group 20+ but DQ'd as not SQL
+        const dqReason = (props.closed_lost_reason || "").toLowerCase();
+        if (designGroupSize >= 20 && dqReason && dqReason.includes("not sql")) {
+          issues.push("DQ reason mismatch (design group 20+)");
+        }
         if (issues.length > 0) {
           classified.hyg[repName].push({ ...dealObj, extra: issues.join(" · ") });
         }
       }
 
+      // ── Deal in Stage Too Long: 30+ days in current stage ─────────────
+      if (isActive) {
+        const stageEntryProp = `hs_date_entered_${stageId}`;
+        const stageEntryRaw = props[stageEntryProp] || "";
+        if (stageEntryRaw) {
+          const daysInStage = Math.floor((now - new Date(stageEntryRaw).getTime()) / 86400000);
+          if (daysInStage > 30) {
+            classified.stageTooLong[repName].push({ ...dealObj, extra: String(daysInStage) });
+          }
+        }
+      }
+
       // ── Meeting Booked Overdue: flag if notes_next_activity_date is before today
-      // Future date = fine. No date = fine. Only past date = flagged.
       if (isMtgBooked && nextActDate && nextActDate < todayStr) {
         classified.mtg[repName].push({ ...dealObj, extra: nextActDate });
       }
@@ -169,16 +200,18 @@ exports.handler = async (event) => {
 
     // Summary
     const summary = {
-      totalDeals:   totalActiveDeals,
-      stagnating:   REPS.reduce((n, r) => n + classified.stag[r].length,  0),
-      noChampion:   REPS.reduce((n, r) => n + classified.champ[r].length, 0),
-      noDM:         REPS.reduce((n, r) => n + classified.dm[r].length,    0),
-      noNextStep:   REPS.reduce((n, r) => n + classified.next[r].length,  0),
-      hygieneGaps:  REPS.reduce((n, r) => n + classified.hyg[r].length,   0),
-      mtgOverdue:   REPS.reduce((n, r) => n + classified.mtg[r].length,   0),
+      totalDeals:     totalActiveDeals,
+      stagnating:     REPS.reduce((n, r) => n + classified.stag[r].length,  0),
+      noChampion:     REPS.reduce((n, r) => n + classified.champ[r].length, 0),
+      noDM:           REPS.reduce((n, r) => n + classified.dm[r].length,    0),
+      noNextStep:     REPS.reduce((n, r) => n + classified.next[r].length,  0),
+      hygieneGaps:    REPS.reduce((n, r) => n + classified.hyg[r].length,   0),
+      mtgOverdue:     REPS.reduce((n, r) => n + classified.mtg[r].length,   0),
+      stageTooLong:   REPS.reduce((n, r) => n + classified.stageTooLong[r].length, 0),
     };
     summary.totalIssues = summary.stagnating + summary.noChampion + summary.noDM +
-                          summary.noNextStep + summary.hygieneGaps + summary.mtgOverdue;
+                          summary.noNextStep + summary.hygieneGaps + summary.mtgOverdue +
+                          summary.stageTooLong;
 
     const repStats = REPS.map(rep => ({
       name:  rep,
@@ -192,10 +225,12 @@ exports.handler = async (event) => {
       next:         classified.next[rep].length,
       hyg:          classified.hyg[rep].length,
       mtg:          classified.mtg[rep].length,
+      stageTooLong: classified.stageTooLong[rep].length,
       punt:         0,
       totalFlagged: classified.stag[rep].length  + classified.champ[rep].length +
                     classified.dm[rep].length     + classified.next[rep].length +
-                    classified.hyg[rep].length    + classified.mtg[rep].length,
+                    classified.hyg[rep].length    + classified.mtg[rep].length +
+                    classified.stageTooLong[rep].length,
     }));
 
     return {
@@ -224,6 +259,10 @@ async function fetchPipelineDeals(apiKey) {
   const props = [
     "dealname", "dealstage", "hubspot_owner_id", "amount", "closedate",
     "notes_next_activity_date", "notes_last_updated", "num_associated_contacts",
+    "design_group_size__of_revit_users_", "closed_lost_reason",
+    "hs_date_entered_166376493", "hs_date_entered_closedwon",
+    "hs_date_entered_presentationscheduled", "hs_date_entered_119042476",
+    "hs_date_entered_decisionmakerboughtin",
   ];
 
   while (true) {
@@ -311,7 +350,7 @@ async function fetchDealContactRoles(apiKey, dealIds) {
   for (const [dealId, contactIds] of contactIdsByDeal.entries()) {
     for (const cid of contactIds) {
       const inf = contactInfluence.get(String(cid)) || "";
-      if (inf.includes(CHAMPION_INFLUENCE)) championDealIds.add(String(dealId));
+      if (CHAMPION_INFLUENCES.some(ci => inf.includes(ci))) championDealIds.add(String(dealId));
       if (inf.includes(DM_INFLUENCE)) dmDealIds.add(String(dealId));
     }
   }
@@ -341,4 +380,20 @@ async function hubspotPost(url, body, apiKey) {
 function formatDate(iso) {
   if (!iso) return "N/A";
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function businessDaysBetween(startStr, endStr) {
+  // Returns number of business days between two "YYYY-MM-DD" strings
+  const start = new Date(startStr + "T00:00:00Z");
+  const end   = new Date(endStr + "T00:00:00Z");
+  if (end <= start) return 0;
+  let count = 0;
+  const cur = new Date(start);
+  cur.setUTCDate(cur.getUTCDate() + 1); // start counting from next day
+  while (cur <= end) {
+    const day = cur.getUTCDay();
+    if (day !== 0 && day !== 6) count++;
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return count;
 }
