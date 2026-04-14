@@ -13,8 +13,7 @@
  * Health checks:
  *   Stagnating:      Last activity >10d ago, OR >7d + next activity >5 biz days out.
  *                     Excludes Booked stage and design group >= 200.
- *   No Champion:     Scoping → Commit — influence = "4 - Champion" or "3 - Ability to Champion"
- *                     (Discovery excluded)
+ *   No Champion:     Scoping → Commit — influence = "4 - Champion" only (Discovery excluded)
  *   No DM:           Validation + Commit — contact influence = "6 - Decision Maker"
  *   No Next Step:    Next activity unknown AND last activity >1 day ago
  *   Hygiene Gaps:    Missing amount, close date in past, DQ reason mismatch (dashboard only)
@@ -45,7 +44,7 @@ const DM_STAGE_IDS = ["presentationscheduled", "119042476"];
 // Booked stage ID (excluded from stagnation)
 const BOOKED_STAGE_ID = "decisionmakerboughtin";
 
-const CHAMPION_INFLUENCES = ["4 - Champion", "3 - Ability to Champion"];
+const CHAMPION_INFLUENCE  = "4 - Champion";
 const DM_INFLUENCE        = "6 - Decision Maker";
 
 const REP_EMAILS = {
@@ -76,7 +75,7 @@ exports.handler = async (event) => {
     const ownerMap = await fetchOwners(apiKey);
     const deals    = await fetchPipelineDeals(apiKey);
     const dealIds  = deals.map(d => d.id);
-    const { championDealIds, dmDealIds, dealsWithContacts } = await fetchDealContactRoles(apiKey, dealIds);
+    const { championDealIds, dmDealIds, dealsWithContacts, _debug } = await fetchDealContactRoles(apiKey, dealIds);
 
     const now      = Date.now();
     const todayStr = new Date().toISOString().slice(0, 10); // "2026-03-24"
@@ -148,13 +147,17 @@ exports.handler = async (event) => {
       }
 
       // ── No Champion: Scoping → Commit, skip Discovery ─────────────────
-      if (isActive && CHAMPION_STAGE_IDS.includes(stageId) && !championDealIds.has(String(deal.id))) {
-        classified.champ[repName].push(dealObj);
+      if (isActive && CHAMPION_STAGE_IDS.includes(stageId)) {
+        if (!championDealIds.has(String(deal.id))) {
+          classified.champ[repName].push(dealObj);
+        }
       }
 
       // ── No DM: Validation + Commit ────────────────────────────────────
-      if (isActive && DM_STAGE_IDS.includes(stageId) && !dmDealIds.has(String(deal.id))) {
-        classified.dm[repName].push(dealObj);
+      if (isActive && DM_STAGE_IDS.includes(stageId)) {
+        if (!dmDealIds.has(String(deal.id))) {
+          classified.dm[repName].push(dealObj);
+        }
       }
 
       // ── No Next Activity: unknown next activity AND last activity >1 day ago
@@ -246,6 +249,7 @@ exports.handler = async (event) => {
       body: JSON.stringify({
         lastUpdated: new Date().toISOString(),
         summary, reps: REPS, repStats, data: classified,
+        _debug,
       }),
     };
 
@@ -357,15 +361,28 @@ async function fetchDealContactRoles(apiKey, dealIds) {
   console.log(`Found influence values for ${contactInfluence.size} contacts`);
 
   // Map influence to deals — use string IDs consistently
+  const allInfluenceValues = new Set();
   for (const [dealId, contactIds] of contactIdsByDeal.entries()) {
     for (const cid of contactIds) {
       const inf = contactInfluence.get(String(cid)) || "";
-      if (CHAMPION_INFLUENCES.some(ci => inf.includes(ci))) championDealIds.add(String(dealId));
+      if (inf) allInfluenceValues.add(inf);
+      if (inf.includes(CHAMPION_INFLUENCE)) championDealIds.add(String(dealId));
       if (inf.includes(DM_INFLUENCE)) dmDealIds.add(String(dealId));
     }
   }
 
-  return { championDealIds, dmDealIds, dealsWithContacts };
+  console.log(`Unique influence values found: ${JSON.stringify([...allInfluenceValues])}`);
+  console.log(`Deals with champion: ${championDealIds.size}, Deals with DM: ${dmDealIds.size}`);
+  console.log(`Total deals with contacts: ${dealsWithContacts.size}`);
+
+  return { championDealIds, dmDealIds, dealsWithContacts, _debug: {
+    uniqueInfluenceValues: [...allInfluenceValues],
+    dealsWithChampion: championDealIds.size,
+    dealsWithDM: dmDealIds.size,
+    dealsWithContacts: dealsWithContacts.size,
+    totalContactsFetched: allContactIds.length,
+    contactsWithInfluence: contactInfluence.size,
+  }};
 }
 
 
