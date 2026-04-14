@@ -13,8 +13,9 @@
  * Health checks:
  *   Stagnating:      Last activity >10d ago, OR >7d + next activity >5 biz days out.
  *                     Excludes Booked stage and design group >= 200.
- *   No Champion:     Scoping only — influence = "4 - Champion" or "3 - Ability to Champion"
- *   No DM:           Validation only — contact influence = "6 - Decision Maker"
+ *   No Champion:     Scoping → Commit — influence = "4 - Champion" or "3 - Ability to Champion"
+ *                     (Discovery excluded)
+ *   No DM:           Validation + Commit — contact influence = "6 - Decision Maker"
  *   No Next Step:    Next activity unknown AND last activity >1 day ago
  *   Hygiene Gaps:    Missing amount, close date in past, DQ reason mismatch (dashboard only)
  *   Stage Too Long:  Deal in same stage for 30+ days
@@ -35,11 +36,11 @@ const STAGE_LABELS = {
   "119042476":             "Commit",
 };
 
-// No Champion: Scoping only (accept "ability to champion" as valid)
-const CHAMPION_STAGE_IDS = ["closedwon"]; // closedwon = Scoping in our HubSpot
+// No Champion: Scoping onwards (Scoping, Validation, Commit — NOT Discovery)
+const CHAMPION_STAGE_IDS = ["closedwon", "presentationscheduled", "119042476"];
 
-// No DM: Validation only
-const DM_STAGE_IDS = ["presentationscheduled"];
+// No DM: Validation + Commit
+const DM_STAGE_IDS = ["presentationscheduled", "119042476"];
 
 // Booked stage ID (excluded from stagnation)
 const BOOKED_STAGE_ID = "decisionmakerboughtin";
@@ -146,12 +147,12 @@ exports.handler = async (event) => {
         }
       }
 
-      // ── No Champion: Scoping only (accept "ability to champion") ──────
+      // ── No Champion: Scoping → Commit, skip Discovery ─────────────────
       if (isActive && CHAMPION_STAGE_IDS.includes(stageId) && !championDealIds.has(String(deal.id))) {
         classified.champ[repName].push(dealObj);
       }
 
-      // ── No DM: Validation only ────────────────────────────────────────
+      // ── No DM: Validation + Commit ────────────────────────────────────
       if (isActive && DM_STAGE_IDS.includes(stageId) && !dmDealIds.has(String(deal.id))) {
         classified.dm[repName].push(dealObj);
       }
@@ -182,12 +183,18 @@ exports.handler = async (event) => {
 
       // ── Deal in Stage Too Long: 30+ days in current stage ─────────────
       if (isActive) {
-        const stageEntryProp = `hs_date_entered_${stageId}`;
-        const stageEntryRaw = props[stageEntryProp] || "";
+        // Try multiple HubSpot property name formats, fall back to createdate
+        const stageEntryRaw = props[`hs_date_entered_${stageId}`]
+          || props[`hs_v2_date_entered_${stageId}`]
+          || props.createdate
+          || "";
         if (stageEntryRaw) {
-          const daysInStage = Math.floor((now - new Date(stageEntryRaw).getTime()) / 86400000);
-          if (daysInStage > 30) {
-            classified.stageTooLong[repName].push({ ...dealObj, extra: String(daysInStage) });
+          const entryTime = new Date(stageEntryRaw).getTime();
+          if (!isNaN(entryTime)) {
+            const daysInStage = Math.floor((now - entryTime) / 86400000);
+            if (daysInStage > 30) {
+              classified.stageTooLong[repName].push({ ...dealObj, extra: String(daysInStage) });
+            }
           }
         }
       }
@@ -259,10 +266,13 @@ async function fetchPipelineDeals(apiKey) {
   const props = [
     "dealname", "dealstage", "hubspot_owner_id", "amount", "closedate",
     "notes_next_activity_date", "notes_last_updated", "num_associated_contacts",
-    "design_group_size__of_revit_users_", "closed_lost_reason",
+    "design_group_size__of_revit_users_", "closed_lost_reason", "createdate",
     "hs_date_entered_166376493", "hs_date_entered_closedwon",
     "hs_date_entered_presentationscheduled", "hs_date_entered_119042476",
     "hs_date_entered_decisionmakerboughtin",
+    "hs_v2_date_entered_166376493", "hs_v2_date_entered_closedwon",
+    "hs_v2_date_entered_presentationscheduled", "hs_v2_date_entered_119042476",
+    "hs_v2_date_entered_decisionmakerboughtin",
   ];
 
   while (true) {
