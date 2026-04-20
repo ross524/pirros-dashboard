@@ -18,7 +18,8 @@
  *   No Next Step:    Next activity unknown AND last activity >1 day ago
  *   Hygiene Gaps:    Missing amount, close date in past, DQ reason mismatch (dashboard only)
  *   Stage Too Long:  Deal in same stage for 30+ days
- *   Mtg Overdue:     Meeting Booked stage where notes_next_activity_date is before today
+ *   Mtg Overdue:     Meeting Booked stage where initial_meeting_date is before today
+ *                     AND rescheduling_owner is empty (matches HubSpot view 43259053)
  */
 
 const HUBSPOT_BASE = "https://api.hubapi.com";
@@ -202,9 +203,16 @@ exports.handler = async (event) => {
         }
       }
 
-      // ── Meeting Booked Overdue: flag if notes_next_activity_date is before today
-      if (isMtgBooked && nextActDate && nextActDate < todayStr) {
-        classified.mtg[repName].push({ ...dealObj, extra: nextActDate });
+      // ── Meeting Booked Overdue: initial_meeting_date is in the past
+      //    AND rescheduling_owner is empty (no one assigned to rebook).
+      //    Matches HubSpot view "Initial Meeting Date In the past" (43259053).
+      if (isMtgBooked) {
+        const initMtgRaw   = props.initial_meeting_date || "";
+        const initMtgDate  = initMtgRaw ? initMtgRaw.slice(0, 10) : null;
+        const reschedOwner = (props.rescheduling_owner || "").trim();
+        if (initMtgDate && initMtgDate < todayStr && !reschedOwner) {
+          classified.mtg[repName].push({ ...dealObj, extra: formatDate(initMtgRaw) });
+        }
       }
     }
 
@@ -271,6 +279,7 @@ async function fetchPipelineDeals(apiKey) {
     "dealname", "dealstage", "hubspot_owner_id", "amount", "closedate",
     "notes_next_activity_date", "notes_last_updated", "num_associated_contacts",
     "design_group_size__of_revit_users_", "closed_lost_reason", "createdate",
+    "initial_meeting_date", "rescheduling_owner",
     "hs_date_entered_166376493", "hs_date_entered_closedwon",
     "hs_date_entered_presentationscheduled", "hs_date_entered_119042476",
     "hs_date_entered_decisionmakerboughtin",
