@@ -56,9 +56,11 @@ const REP_EMAILS = {
   "tommaso@pirros.com":  "Tommaso",
   "fozhan@pirros.com":   "Fozhan",
   "brett@pirros.com":    "Brett",
+  "ross@pirros.com":     "Ross",
+  "peter@pirros.com":    "Peter",
 };
 
-const REPS = ["Xander", "Keenan", "Zane", "Tommaso", "Kas", "Fozhan", "Brett"];
+const REPS = ["Xander", "Keenan", "Zane", "Tommaso", "Kas", "Fozhan", "Brett", "Ross", "Peter"];
 
 
 exports.handler = async (event) => {
